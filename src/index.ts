@@ -6,6 +6,7 @@ import { ExecutionSlot } from "./execution-slot.js";
 import { OpencodeSession } from "./opencode.js";
 import { startOpencodeServer } from "./opencode-server.js";
 import { PublicEventPublisher } from "./public-activity.js";
+import { PublicActivityReplicator } from "./public-activity-sync.js";
 import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
 import { initDatabase } from "./db.js";
@@ -20,6 +21,7 @@ console.log(`[app] runtime log file: ${getRuntimeLogPath()}`);
 async function main(): Promise<void> {
   const releaseLock = acquireInstanceLock();
   const config = loadConfig();
+  const publicActivityReplicator = buildPublicActivityReplicator(config);
   const publicActivity = new PublicEventPublisher(
     config.publicActivityDir,
     config.publicActivityMaxEvents,
@@ -30,6 +32,7 @@ async function main(): Promise<void> {
       actor: config.deployActor,
       deployedAt: config.deployedAt,
     },
+    (snapshot) => publicActivityReplicator?.publish(snapshot),
   );
   const executionSlot = new ExecutionSlot();
   initDatabase();
@@ -128,6 +131,7 @@ async function main(): Promise<void> {
     try {
       await scheduler?.stop();
       await bridge?.stop();
+      await publicActivityReplicator?.stop();
     } catch (error) {
       console.error("[app] error during teardown", error);
     }
@@ -142,6 +146,28 @@ async function main(): Promise<void> {
   });
   process.once("SIGTERM", () => {
     void gracefulShutdown("SIGTERM");
+  });
+}
+
+function buildPublicActivityReplicator(
+  config: ReturnType<typeof loadConfig>,
+): PublicActivityReplicator | undefined {
+  if (!config.publicActivitySyncUrl && !config.publicActivitySyncToken) {
+    return undefined;
+  }
+
+  if (!config.publicActivitySyncUrl || !config.publicActivitySyncToken) {
+    console.warn(
+      "[public-activity-sync] skipped: both PUBLIC_ACTIVITY_SYNC_URL and PUBLIC_ACTIVITY_SYNC_TOKEN are required",
+    );
+    return undefined;
+  }
+
+  return new PublicActivityReplicator({
+    ingestUrl: config.publicActivitySyncUrl,
+    token: config.publicActivitySyncToken,
+    heartbeatMs: config.publicActivityHeartbeatMs,
+    timeoutMs: config.publicActivitySyncTimeoutMs,
   });
 }
 

@@ -4,6 +4,10 @@ export interface AppConfig {
   opencodeServerPassword?: string;
   stateFile: string;
   publicActivityDir: string;
+  publicActivitySyncUrl?: string;
+  publicActivitySyncToken?: string;
+  publicActivityHeartbeatMs: number;
+  publicActivitySyncTimeoutMs: number;
   agentInboxEmail?: string;
   userEmail?: string;
   gmailTo?: string;

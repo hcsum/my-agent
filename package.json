@@ -6,6 +6,10 @@
   "description": "OpenCode workspace with skills, notes, and Gmail bridge",
   "scripts": {
     "bridge": "bash scripts/bridge.sh",
+    "cf:agent-status:check": "wrangler deploy --dry-run --config cloudflare/agent-status-worker/wrangler.jsonc",
+    "cf:agent-status:deploy": "wrangler deploy --config cloudflare/agent-status-worker/wrangler.jsonc",
+    "cf:agent-status:dev": "wrangler dev --config cloudflare/agent-status-worker/wrangler.jsonc",
+    "cf:agent-status:types": "wrangler types cloudflare/agent-status-worker/worker-configuration.d.ts --config cloudflare/agent-status-worker/wrangler.jsonc",
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "format:backlink-master": "node scripts/csv-to-md-table.mjs notes/projects/backlink-master.csv notes/projects/backlink-master.md",
@@ -34,7 +38,8 @@
     "@types/node": "^22.15.21",
     "prettier": "^3.9.1",
     "tsx": "^4.20.6",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "wrangler": "^4.106.0"
   },
   "engines": {
     "node": ">=22"

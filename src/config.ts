@@ -39,6 +39,14 @@ export function loadConfig(): AppConfig {
     publicActivityDir:
       process.env.PUBLIC_ACTIVITY_DIR?.trim() ||
       path.join(".data", "public-activity"),
+    publicActivitySyncUrl:
+      process.env.PUBLIC_ACTIVITY_SYNC_URL?.trim() || undefined,
+    publicActivitySyncToken:
+      process.env.PUBLIC_ACTIVITY_SYNC_TOKEN?.trim() || undefined,
+    publicActivityHeartbeatMs:
+      Number(process.env.PUBLIC_ACTIVITY_HEARTBEAT_MS) || 60000,
+    publicActivitySyncTimeoutMs:
+      Number(process.env.PUBLIC_ACTIVITY_SYNC_TIMEOUT_MS) || 10000,
     agentInboxEmail:
       process.env.AGENT_INBOX_EMAIL?.trim() ||
       process.env.GMAIL_TO?.trim() ||

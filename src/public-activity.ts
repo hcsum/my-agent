@@ -103,12 +103,17 @@ export interface PublicActivityStats {
   tasksFailed: number;
 }
 
-interface PublicActivityFile {
+export interface PublicActivityFile {
   updatedAt: string;
   events: PublicActivityEntry[];
   meta?: {
     deploymentFingerprint?: string;
   };
+}
+
+export interface PublicActivitySnapshot {
+  current: PublicCurrentState;
+  eventsFile: PublicActivityFile;
 }
 
 interface DeploymentInfo {
@@ -131,6 +136,7 @@ export class PublicEventPublisher {
   private readonly activeRuns = new Set<string>();
   private readonly maxEvents: number;
   private readonly deploymentInfo?: DeploymentInfo;
+  private readonly snapshotListener?: (snapshot: PublicActivitySnapshot) => void;
   private events: PublicActivityEntry[] = [];
   private current: PublicCurrentState;
   private sequence = 0;
@@ -140,9 +146,11 @@ export class PublicEventPublisher {
     dir: string,
     maxEvents = DEFAULT_MAX_EVENTS,
     deploymentInfo?: DeploymentInfo,
+    snapshotListener?: (snapshot: PublicActivitySnapshot) => void,
   ) {
     this.maxEvents = maxEvents > 0 ? maxEvents : DEFAULT_MAX_EVENTS;
     this.deploymentInfo = deploymentInfo;
+    this.snapshotListener = snapshotListener;
     fs.mkdirSync(dir, { recursive: true });
     this.currentPath = path.join(dir, "current.json");
     this.eventsPath = path.join(dir, "events.json");
@@ -356,8 +364,23 @@ export class PublicEventPublisher {
   }
 
   private writeSnapshot(): void {
+    const eventsFile = this.buildEventsFile();
     writeJsonAtomic(this.currentPath, this.current);
-    writeJsonAtomic(this.eventsPath, {
+    writeJsonAtomic(this.eventsPath, eventsFile);
+    if (!this.snapshotListener) return;
+
+    try {
+      this.snapshotListener({
+        current: cloneCurrentState(this.current),
+        eventsFile: cloneEventsFile(eventsFile),
+      });
+    } catch (error) {
+      console.error("[public-activity] snapshot listener failed", error);
+    }
+  }
+
+  private buildEventsFile(): PublicActivityFile {
+    return {
       updatedAt: new Date().toISOString(),
       events: this.events,
       meta: {
@@ -365,7 +388,7 @@ export class PublicEventPublisher {
           ? { deploymentFingerprint: this.deploymentFingerprint }
           : {}),
       },
-    });
+    };
   }
 
   private nextId(prefix: string): string {
@@ -562,6 +585,21 @@ function normalizeCurrentState(current: PublicCurrentState): PublicCurrentState 
           tasksFailed: current.stats.tasksFailed || 0,
         }
       : { ...DEFAULT_STATS },
+  };
+}
+
+function cloneCurrentState(current: PublicCurrentState): PublicCurrentState {
+  return {
+    ...current,
+    stats: { ...current.stats },
+  };
+}
+
+function cloneEventsFile(eventsFile: PublicActivityFile): PublicActivityFile {
+  return {
+    updatedAt: eventsFile.updatedAt,
+    events: eventsFile.events.map((entry) => ({ ...entry })),
+    ...(eventsFile.meta ? { meta: { ...eventsFile.meta } } : {}),
   };
 }
 

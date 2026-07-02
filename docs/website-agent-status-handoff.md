@@ -1,6 +1,6 @@
 # Website Handoff: Agent Status Feed
 
-This note is for the agent building the personal website UI that shows the live status and recent activity of the VPS agent.
+This note is for the agent building the personal website UI that shows the live status and recent activity of the agent.
 
 ## Goal and Product Intent
 
@@ -30,10 +30,10 @@ The UI should not imply:
 
 ## Public Endpoints
 
-Base URLs currently exposed from the VPS:
+Base URLs are exposed from the public status surface (for example a Cloudflare Worker):
 
-- `https://vps1.hcxu.cc/current.json`
-- `https://vps1.hcxu.cc/events.json`
+- `https://<public-status-host>/current.json`
+- `https://<public-status-host>/events.json`
 
 These are the only intended website-facing status APIs for now.
 
