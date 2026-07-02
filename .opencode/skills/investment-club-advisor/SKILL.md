@@ -15,7 +15,7 @@ Turn a 韭俱乐部 report into two things the user can act on: a faithful **解
 ## Step 1 — Decode (always)
 
 - **Expand every acronym/ticker with its Chinese full name** on first mention (PCE→个人消费支出物价指数, MU→Micron 美光, M7→美股七巨头, etc.). This is a hard rule the user enforces.
-- Resolve slang against `references/glossary.md`. If a term isn't there and you're confident, decode it and **append it to the glossary** (with date). If you're unsure, use `web-access` to look it up.
+- Resolve slang against `notes/my-files/investment-club/黑话词典.md`. If a term isn't there and you're confident, decode it and **append it to the dictionary** (with date). If you're unsure, use `web-access` to look it up.
 - **Use `web-access` to stay current**: the report is dated and references live events (Fed moves, geopolitics, IPOs, data releases). Verify the current state of anything load-bearing rather than relying on training data. Confirm against primary sources where it matters.
 - **Flag what you still can't resolve.** After searching, list any term/event you couldn't confirm in a `仍未定 / 待消息` section. Never silently guess.
 
@@ -43,5 +43,5 @@ Give real advice — the user explicitly wants it. But ground every recommendati
 
 ## References
 
-- `references/glossary.md` — club slang + acronym dictionary. Read it during decode; extend it when you confirm a new term.
+- `notes/my-files/investment-club/黑话词典.md` — club slang + acronym dictionary (lives with the other club materials in `notes/`). Read it during decode; extend it when you confirm a new term.
 - `references/templates.md` — the 解读 structure and the 投资建议 structure.
