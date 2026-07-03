@@ -1,13 +1,13 @@
 ---
 name: check-keyword
-description: Check the SEO potential of a keyword by gathering data from various tools and sources, and write the findings into a keyword research file under notes/projects/research/.
+description: Check the SEO potential of a keyword by gathering data from various tools and sources, and record the findings in the notes repo.
 ---
 
 ## Objective
 
-Research the SEO potential of a given keyword (or a tight cluster of closely related keywords — same core intent, would share one landing page/strategy) and write the findings into a markdown file under `notes/projects/research/` in the `notes` repo.
+Research the SEO potential of a given keyword (or a tight cluster of closely related keywords — same core intent, would share one landing page/strategy) and record the findings in the `notes` repo.
 
-Reuse the existing file for a keyword or cluster if one already exists; otherwise create a new one, named `<keyword-or-cluster-slug>-research.md` (e.g. `ai-life-coach-research.md` for a single keyword, `visual-novel-story-game-research.md` for a cluster). Only group keywords that genuinely belong together; when in doubt, use separate files. NEVER delete or modify the research file for a different keyword or cluster — only create a new file or update the one for the current keyword(s).
+Look at how existing keyword/SEO research is organized there and follow the same convention: reuse the existing file for a keyword or cluster if one already exists, otherwise create a new one in a sensible location alongside it. Only group keywords into one file when they genuinely belong together; when in doubt, use separate files. NEVER delete or modify the research for a different keyword or cluster — only create a new file or update the one for the current keyword(s).
 
 ## Tools to use
 
@@ -39,7 +39,7 @@ If a field can't be found (e.g. not exposed by a free tier), leave it blank rath
 
 ## Output format
 
-Match the format already established in `notes/projects/research/` (see `ai-life-coach-research.md` for a single keyword, or `visual-novel-story-game-research.md` / `is-the-one-relationship-research.md` for a cluster). Each file should include:
+Match the format of existing keyword research files you find in the notes repo. Each file should include:
 
 - a short header naming the keyword(s) and when/why the data was gathered
 - a data table covering the required fields above, one row per keyword
