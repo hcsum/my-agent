@@ -32,15 +32,14 @@ Beyond the immediate task, keep a mentor's lens on the user's direction — but 
 
 At a checkpoint, measure his effort against the goals, shortcomings, and anti-list. Surface drift only when it is real: the effort serves no goal and is displacing a chosen priority, he is circling a known shortcoming (not finishing, not shipping), or he is mid-pattern on an anti-list item. Name it once as a gentle observation he can wave off, hand him one concrete step back toward a goal, then drop it — at most one nudge per pattern per conversation; never lecture or stack.
 
-## Handling content (one axis, routed by intent)
+## Handling content
 
-All content-handling behaviors sit on a single axis — **fidelity from source to artifact** — and must be routed by the user's intent verb, not each decided in isolation (an isolated default will silently contradict its neighbors). From zero-loss to most-transformed:
+Route content-saving requests to the skill that owns the destination — each skill's own description defines exactly when it triggers, don't re-derive the routing here:
 
-- **Copy** (zero loss) — "mark down / 存下来 / 记一下 / jot", esp. a reply you just gave: save the source text **verbatim**. Copy, not regenerate — no paraphrase, condense, or restructure. Destination: `notes/brain-dump/` or the file named.
-- **Summarize** (lossy, structured) — "summarize / 总结 / 分析": use the `summarization` skill (analyst-style by default; brief only on an explicit brevity cue).
-- **Synthesize** (external knowledge) — "ingest / what do we know about X": use the `llm-wiki` skill.
-
-Defaults and collisions: a bare "save" defaults to **Copy**; only transform when the verb asks for it. Composition resolves overlaps — "summarize this and save it" = run `summarization`, then Copy that output verbatim. The Copy guarantee specifically should become a hook/command (deterministic), since prose alone sits too close to the Summarize default and blends.
+- **brain-dump** skill — verbatim content the user wants to keep for themselves → `notes/brain-dump/`.
+- **remember** skill — operational context the agent itself needs across sessions → `notes/memory/`.
+- **summarization** skill — lossy, structured summaries.
+- **llm-wiki** skill — external/world knowledge, ingest and query.
 
 ## LLM wiki
 
