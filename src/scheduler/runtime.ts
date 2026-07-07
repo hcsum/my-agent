@@ -1,5 +1,6 @@
 import { computeNextCronRunAt, computeNextRunAt, isTaskDue } from "./cron.js";
 import { ScheduledTaskExecutor } from "./executor.js";
+import type { ScheduledResultSink } from "./result-sink.js";
 import {
   deleteTask,
   getTask,
@@ -11,8 +12,7 @@ import {
   recordReportHistory,
   setNextRunAt,
 } from "./store.js";
-import type { ScheduledTask } from "./types.js";
-import type { GmailBridge } from "../gmail.js";
+import type { ScheduledResultPayload, ScheduledTask } from "./types.js";
 
 // setTimeout silently clamps delays > ~24.8 days. When a task is that far out
 // we schedule a stub timer that re-resolves the next fire when it expires.
@@ -21,7 +21,7 @@ const RESCHEDULE_CHECK_FLOOR_MS = 1000;
 
 export interface RuntimeDeps {
   executor: ScheduledTaskExecutor;
-  bridge: GmailBridge;
+  resultSink: ScheduledResultSink;
 }
 
 export class SchedulerRuntime {
@@ -275,17 +275,11 @@ export class SchedulerRuntime {
     }
   }
 
-  private sendScheduledResult(payload: {
-    taskId: string;
-    summary: string;
-    fireTime: string;
-    body: string;
-    isError: boolean;
-  }): void {
+  private sendScheduledResult(payload: ScheduledResultPayload): void {
     // Tracked so a shutdown drain waits for the result email to be delivered,
     // not just for the run to compute its output.
     this.trackInFlight(
-      this.deps.bridge.sendScheduledResult(payload).catch((error) => {
+      this.deps.resultSink.sendScheduledResult(payload).catch((error) => {
         console.error(
           `[scheduler] failed to deliver scheduled result for ${payload.taskId}`,
           error,

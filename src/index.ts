@@ -11,7 +11,9 @@ import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
 import { initDatabase } from "./db.js";
 import { getRuntimeLogPath, setupFileLogging } from "./logger.js";
+import { GmailScheduledResultSink } from "./scheduler/gmail-result-sink.js";
 import { launchScheduler, type Scheduler } from "./scheduler/index.js";
+import { NoopScheduledResultSink } from "./scheduler/result-sink.js";
 
 const BRIDGE_PROCESS_MARKERS = ["src/index.ts", "dist/index.js"];
 
@@ -59,21 +61,24 @@ async function main(): Promise<void> {
     launches.push(
       bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),
     );
-    launches.push(
-      launchScheduler({
-        config,
-        opencode,
-        queue,
-        bridge,
-        publicActivity,
-        executionSlot,
-      })
-        .then((s) => {
-          scheduler = s;
-        })
-        .catch((err) => console.error("[scheduler] failed to start", err)),
-    );
   }
+
+  launches.push(
+    launchScheduler({
+      config,
+      opencode,
+      queue,
+      resultSink: bridge
+        ? new GmailScheduledResultSink(bridge)
+        : new NoopScheduledResultSink(),
+      publicActivity,
+      executionSlot,
+    })
+      .then((s) => {
+        scheduler = s;
+      })
+      .catch((err) => console.error("[scheduler] failed to start", err)),
+  );
 
   try {
     await Promise.all(launches);
