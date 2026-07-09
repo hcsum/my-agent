@@ -33,7 +33,7 @@ Default to the **clipboard**. Write a **file** instead when either:
 When it's a genuine toss-up, default to clipboard and mention a file is available.
 
 - **Clipboard**: pipe the handover text to `pbcopy` (macOS). Report that it's on the clipboard plus a one-line description of what was copied.
-- **File**: default under `notes/brain-dump/` with a short kebab-case name like `handover-<topic>-YYYY-MM-DD.md`, unless the user gives a path. Report the path.
+- **File**: default under `tmp/` at the project root (gitignored — not committed) with a short kebab-case name like `handover-<topic>-YYYY-MM-DD.md`, unless the user gives a path. Create `tmp/` if it doesn't exist. Report the path.
 
 ## Output
 
