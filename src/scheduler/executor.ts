@@ -79,6 +79,7 @@ export class ScheduledTaskExecutor {
       "scheduler@localhost";
     return {
       threadId: `scheduled-task:${task.id}:${fireTime}`,
+      sourceChannel: "scheduler",
       messageId: `scheduled-task:${task.id}:${fireTime}`,
       senderEmail,
       senderName: "Scheduler",

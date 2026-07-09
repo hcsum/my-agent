@@ -36,6 +36,7 @@ export interface PendingQuestionRecord {
 
 export interface ThreadRunRecord {
   threadId: string;
+  sourceChannel: string;
   sessionKey: string;
   sessionId: string;
   gmailMessageId: string;
@@ -346,6 +347,7 @@ export function getThreadRun(threadId: string): ThreadRunRecord | undefined {
     .prepare(
       `SELECT
          thread_id,
+         source_channel,
          session_key,
          session_id,
          gmail_message_id,
@@ -371,6 +373,7 @@ export function listActiveThreadRuns(): ThreadRunRecord[] {
     .prepare(
       `SELECT
          thread_id,
+         source_channel,
          session_key,
          session_id,
          gmail_message_id,
@@ -396,6 +399,7 @@ export function upsertThreadRun(run: ThreadRunRecord): void {
   db.prepare(
     `INSERT INTO thread_runs (
        thread_id,
+       source_channel,
        session_key,
        session_id,
        gmail_message_id,
@@ -408,8 +412,9 @@ export function upsertThreadRun(run: ThreadRunRecord): void {
        last_error,
        started_at_ms,
        updated_at_ms
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(thread_id) DO UPDATE SET
+       source_channel = excluded.source_channel,
        session_key = excluded.session_key,
        session_id = excluded.session_id,
        gmail_message_id = excluded.gmail_message_id,
@@ -424,6 +429,7 @@ export function upsertThreadRun(run: ThreadRunRecord): void {
        updated_at_ms = excluded.updated_at_ms`,
   ).run(
     run.threadId,
+    run.sourceChannel,
     run.sessionKey,
     run.sessionId,
     run.gmailMessageId,
@@ -547,6 +553,7 @@ export function resetThreadFailures(threadId: string): void {
 
 interface ThreadRunRow {
   thread_id: string;
+  source_channel: string;
   session_key: string;
   session_id: string;
   gmail_message_id: string;
@@ -564,6 +571,7 @@ interface ThreadRunRow {
 function mapThreadRunRow(row: ThreadRunRow): ThreadRunRecord {
   return {
     threadId: row.thread_id,
+    sourceChannel: row.source_channel,
     sessionKey: row.session_key,
     sessionId: row.session_id,
     gmailMessageId: row.gmail_message_id,
@@ -654,6 +662,7 @@ function createSchema(): void {
 
     CREATE TABLE IF NOT EXISTS thread_runs (
       thread_id TEXT PRIMARY KEY,
+      source_channel TEXT NOT NULL DEFAULT 'gmail',
       session_key TEXT NOT NULL,
       session_id TEXT NOT NULL,
       gmail_message_id TEXT NOT NULL DEFAULT '',
@@ -718,6 +727,7 @@ function runMigrations(): void {
   ensureColumn("pending_permissions", "type", "type TEXT NOT NULL DEFAULT ''");
   ensureColumn("pending_permissions", "pattern", "pattern TEXT NOT NULL DEFAULT ''");
   ensureColumn("pending_permissions", "updated_at", "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+  ensureColumn("thread_runs", "source_channel", "source_channel TEXT NOT NULL DEFAULT 'gmail'");
 }
 
 function ensureColumn(table: string, column: string, definition: string): void {

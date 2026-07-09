@@ -3,6 +3,17 @@ const encoder = new TextEncoder();
 
 type PresenceState = "online" | "stale" | "offline";
 
+interface PublicChannelState {
+  source: string;
+  status: string;
+  title: string;
+  summary?: string;
+  updatedAt: string;
+  activeCount: number;
+  taskType?: string;
+  activityKey?: string;
+}
+
 interface PublicActivityStats {
   tasksHandled: number;
   tasksCompleted: number;
@@ -35,6 +46,7 @@ interface PublicCurrentState {
   stats: PublicActivityStats;
   source?: string;
   taskType?: string;
+  channels?: PublicChannelState[];
 }
 
 interface PublicActivityFile {
@@ -42,6 +54,7 @@ interface PublicActivityFile {
   events: PublicActivityEntry[];
   meta?: {
     deploymentFingerprint?: string;
+    channels?: PublicChannelState[];
   };
 }
 

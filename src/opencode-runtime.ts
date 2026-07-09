@@ -52,6 +52,7 @@ export interface RunImageInput {
 
 export interface GmailRunRequest {
   threadId: string;
+  sourceChannel: string;
   messageId: string;
   senderEmail: string;
   senderName: string;
@@ -165,9 +166,16 @@ interface TextPartEvent {
   };
 }
 
+interface ObservedExternalSession {
+  task: PublicTaskContext;
+  startedAtMs: number;
+  loadedSkills: Set<string>;
+}
+
 export class OpencodeRuntime {
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly sessionToThread = new Map<string, string>();
+  private readonly observedExternalSessions = new Map<string, ObservedExternalSession>();
   // Cache of `${providerID}/${modelID}` -> context window size, populated lazily
   // from config.providers() so the context-usage footer can show a percentage.
   private readonly modelContextLimits = new Map<string, number>();
@@ -184,6 +192,10 @@ export class OpencodeRuntime {
     private readonly sessionManager: RuntimeSessionManager,
     private readonly publicActivity: PublicEventPublisher,
   ) {}
+
+  startBackgroundMonitoring(): void {
+    this.ensureBackgroundLoops();
+  }
 
   async startRun(
     request: GmailRunRequest,
@@ -203,6 +215,7 @@ export class OpencodeRuntime {
     const promptText = composeRunPrompt(request);
     const meta: ThreadRunRecord = {
       threadId: request.threadId,
+      sourceChannel: request.sourceChannel,
       sessionKey: request.sessionKey,
       sessionId,
       gmailMessageId: request.messageId,
@@ -494,7 +507,10 @@ export class OpencodeRuntime {
       const props = event.properties as { sessionID: string; info: Message };
       if (props.info.role !== "assistant") return;
       const run = this.getRunForSession(props.sessionID);
-      if (!run) return;
+      if (!run) {
+        this.observeExternalSessionActivity(props.sessionID);
+        return;
+      }
       this.trackAssistant(run, props.info as AssistantMessage);
       this.trackAssistantShell(run, props.info as AssistantMessage);
       if (isTerminalAssistantMessage(props.info as AssistantMessage)) {
@@ -516,6 +532,20 @@ export class OpencodeRuntime {
         this.noteProgress(run, `Message part updated: ${props.part.type}.`);
       }
       this.logProgressPart(run, props.part as unknown as ToolPartEvent | TextPartEvent);
+      if (!run) {
+        this.observeExternalSessionActivity(props.sessionID);
+        this.maybeEmitObservedToolStage(
+          props.sessionID,
+          props.part as unknown as ToolPartEvent | TextPartEvent,
+        );
+      }
+      return;
+    }
+
+    if (event.type === "session.idle") {
+      const props = event.properties as { sessionID?: string };
+      if (!props.sessionID || this.getRunForSession(props.sessionID)) return;
+      this.completeObservedExternalSession(props.sessionID);
       return;
     }
 
@@ -523,14 +553,20 @@ export class OpencodeRuntime {
       const props = event.properties as { sessionID?: string; error?: unknown };
       if (!props.sessionID) return;
       const run = this.getRunForSession(props.sessionID);
-      if (!run) return;
+      if (!run) {
+        this.failObservedExternalSession(props.sessionID, extractErrorMessage(props.error));
+        return;
+      }
       await this.failRun(run.threadId, extractErrorMessage(props.error));
     }
   }
 
   private async handlePermissionEvent(permission: PermissionRequest): Promise<void> {
     const run = this.getRunForSession(permission.sessionID);
-    if (!run) return;
+    if (!run) {
+      this.observeExternalSessionWaiting(permission.sessionID, "permission");
+      return;
+    }
     const threadId = run.threadId;
 
     const request: RuntimePermissionRequest = {
@@ -546,6 +582,7 @@ export class OpencodeRuntime {
     upsertPendingPermission(request);
     this.noteProgress(run, `Permission requested: ${request.title}.`);
     this.updateRunState(run, "waiting_permission");
+    this.publicActivity.emit({ type: "task_waiting", task: run.publicTask, reason: "permission" });
     await run.callbacks.onPermission(request);
   }
 
@@ -556,7 +593,10 @@ export class OpencodeRuntime {
     questions: QuestionInfo[];
   }): Promise<void> {
     const run = this.getRunForSession(event.sessionID);
-    if (!run) return;
+    if (!run) {
+      this.observeExternalSessionWaiting(event.sessionID, "question");
+      return;
+    }
     const threadId = run.threadId;
 
     const request: RuntimeQuestionRequest = {
@@ -584,6 +624,7 @@ export class OpencodeRuntime {
     upsertPendingQuestion(persisted);
     this.noteProgress(run, "Follow-up question requested.");
     this.updateRunState(run, "waiting_question");
+    this.publicActivity.emit({ type: "task_waiting", task: run.publicTask, reason: "question" });
     await run.callbacks.onQuestion(request);
   }
 
@@ -977,9 +1018,9 @@ export class OpencodeRuntime {
 
       await this.sessionManager.invalidateSession(run.sessionKey);
       const sessionId = await this.sessionManager.getOrCreateSessionId({
-        channel: "gmail",
+        channel: run.meta.sourceChannel,
         sessionKey: run.sessionKey,
-        sessionTitle: `Gmail ${run.meta.subject}`,
+        sessionTitle: run.meta.subject,
       });
 
       const now = Date.now();
@@ -1078,7 +1119,7 @@ export class OpencodeRuntime {
       ).catch(() => undefined);
       await this.sessionManager.invalidateSession(run.sessionKey);
       const sessionId = await this.sessionManager.getOrCreateSessionId({
-        channel: run.threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+        channel: run.meta.sourceChannel,
         sessionKey: run.sessionKey,
         sessionTitle: run.meta.subject,
       });
@@ -1138,7 +1179,7 @@ export class OpencodeRuntime {
   private async getFreshSessionId(request: GmailRunRequest): Promise<string> {
     try {
       return await this.sessionManager.getOrCreateSessionId({
-        channel: "gmail",
+        channel: request.sourceChannel,
         sessionKey: request.sessionKey,
         sessionTitle: request.sessionTitle,
       });
@@ -1146,7 +1187,7 @@ export class OpencodeRuntime {
       if (!isSessionNotFound(error)) throw error;
       await this.sessionManager.invalidateSession(request.sessionKey);
       return this.sessionManager.getOrCreateSessionId({
-        channel: "gmail",
+        channel: request.sourceChannel,
         sessionKey: request.sessionKey,
         sessionTitle: request.sessionTitle,
       });
@@ -1228,6 +1269,78 @@ export class OpencodeRuntime {
       throw new Error(extractErrorMessage(result.error));
     }
     return result;
+  }
+
+  private observeExternalSessionActivity(sessionId: string): void {
+    this.ensureObservedExternalSession(sessionId);
+  }
+
+  private observeExternalSessionWaiting(
+    sessionId: string,
+    reason: "permission" | "question",
+  ): void {
+    const observed = this.ensureObservedExternalSession(sessionId);
+    this.publicActivity.emit({ type: "task_waiting", task: observed.task, reason });
+  }
+
+  private maybeEmitObservedToolStage(
+    sessionId: string,
+    part: ToolPartEvent | TextPartEvent,
+  ): void {
+    if (part.type !== "tool") return;
+    const label = part.state?.title?.trim() || part.tool;
+    const skillName = extractLoadedSkillName(label);
+    if (!skillName) return;
+
+    const observed = this.ensureObservedExternalSession(sessionId);
+    if (observed.loadedSkills.has(skillName)) return;
+    observed.loadedSkills.add(skillName);
+    this.publicActivity.emit({
+      type: "skill_loaded",
+      task: observed.task,
+      skillName,
+    });
+  }
+
+  private ensureObservedExternalSession(sessionId: string): ObservedExternalSession {
+    const existing = this.observedExternalSessions.get(sessionId);
+    if (existing) return existing;
+
+    const observed: ObservedExternalSession = {
+      task: buildPublicTaskContext({
+        activityKey: `session:${sessionId}`,
+        source: "session",
+      }),
+      startedAtMs: Date.now(),
+      loadedSkills: new Set(),
+    };
+    this.observedExternalSessions.set(sessionId, observed);
+    this.publicActivity.emit({ type: "task_started", task: observed.task });
+    return observed;
+  }
+
+  private completeObservedExternalSession(sessionId: string): void {
+    const observed = this.observedExternalSessions.get(sessionId);
+    if (!observed) return;
+    this.observedExternalSessions.delete(sessionId);
+    this.publicActivity.emit({
+      type: "task_completed",
+      task: observed.task,
+      durationMs: Date.now() - observed.startedAtMs,
+    });
+    this.publicActivity.setIdleIfNoActiveRuns();
+  }
+
+  private failObservedExternalSession(sessionId: string, error: string): void {
+    const observed = this.observedExternalSessions.get(sessionId);
+    if (!observed) return;
+    this.observedExternalSessions.delete(sessionId);
+    this.publicActivity.emit({
+      type: "task_failed",
+      task: observed.task,
+      error,
+    });
+    this.publicActivity.setIdleIfNoActiveRuns();
   }
 }
 
@@ -1409,8 +1522,12 @@ function buildPublicTaskFromMeta(meta: ThreadRunRecord): PublicTaskContext {
   return buildPublicTaskContext({
     activityKey: meta.threadId.startsWith("scheduled-task:")
       ? `scheduled:${meta.sessionKey}`
-      : `gmail:${meta.threadId}`,
-    source: meta.threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+      : `${meta.sourceChannel}:${meta.threadId}`,
+    source: meta.threadId.startsWith("scheduled-task:")
+      ? "scheduler"
+      : meta.sourceChannel === "telegram"
+        ? "telegram"
+        : "gmail",
     subject: meta.subject,
     textBody: meta.lastUserText,
   });

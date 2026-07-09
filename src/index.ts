@@ -44,6 +44,7 @@ async function main(): Promise<void> {
   const queue = new SerialQueue(publicActivity);
   const opencode = new OpencodeSession(config, publicActivity);
   await opencode.healthcheck();
+  opencode.startBackgroundMonitoring();
   publicActivity.setIdleIfNoActiveRuns();
 
   const launches: Promise<void>[] = [];

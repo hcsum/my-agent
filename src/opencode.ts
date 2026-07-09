@@ -90,6 +90,10 @@ export class OpencodeSession {
     console.log(`[opencode] connected; visibleSessions=${sessions.length}`);
   }
 
+  startBackgroundMonitoring(): void {
+    this.runtime.startBackgroundMonitoring();
+  }
+
   async sendTurn(channel: string, input: TurnInput): Promise<string> {
     const sessionKey = input.sessionKey || channel;
     try {

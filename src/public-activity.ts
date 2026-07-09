@@ -27,6 +27,7 @@ export type PublicEventType =
   | "task_received"
   | "task_queued"
   | "task_started"
+  | "task_waiting"
   | "skill_loaded"
   | "research_started"
   | "web_data_started"
@@ -37,7 +38,9 @@ export type PublicEventType =
   | "task_failed"
   | "report_delivered";
 
-export type PublicSource = "gmail" | "scheduler" | "workflow";
+export type PublicSource = "gmail" | "telegram" | "scheduler" | "workflow" | "session";
+
+export type PublicChannelStatus = "idle" | "active" | "waiting" | "error";
 
 export interface PublicTaskContext {
   activityKey: string;
@@ -59,6 +62,7 @@ export type PublicDomainEvent =
   | { type: "task_received"; task: PublicTaskContext }
   | { type: "task_queued"; task: PublicTaskContext }
   | { type: "task_started"; task: PublicTaskContext }
+  | { type: "task_waiting"; task: PublicTaskContext; reason: "permission" | "question" }
   | { type: "skill_loaded"; task: PublicTaskContext; skillName: string }
   | { type: "research_started"; task: PublicTaskContext }
   | { type: "web_data_started"; task: PublicTaskContext }
@@ -86,6 +90,17 @@ export interface PublicActivityEntry {
   actor?: string;
 }
 
+export interface PublicChannelState {
+  source: PublicSource;
+  status: PublicChannelStatus;
+  title: string;
+  summary?: string;
+  updatedAt: string;
+  activeCount: number;
+  taskType?: string;
+  activityKey?: string;
+}
+
 export interface PublicCurrentState {
   status: string;
   title: string;
@@ -95,6 +110,7 @@ export interface PublicCurrentState {
   stats: PublicActivityStats;
   source?: PublicSource;
   taskType?: string;
+  channels?: PublicChannelState[];
 }
 
 export interface PublicActivityStats {
@@ -108,6 +124,7 @@ export interface PublicActivityFile {
   events: PublicActivityEntry[];
   meta?: {
     deploymentFingerprint?: string;
+    channels?: PublicChannelState[];
   };
 }
 
@@ -134,11 +151,13 @@ export class PublicEventPublisher {
   private readonly currentPath: string;
   private readonly eventsPath: string;
   private readonly activeRuns = new Set<string>();
+  private readonly activeRunSources = new Map<string, PublicSource>();
   private readonly maxEvents: number;
   private readonly deploymentInfo?: DeploymentInfo;
   private readonly snapshotListener?: (snapshot: PublicActivitySnapshot) => void;
   private events: PublicActivityEntry[] = [];
   private current: PublicCurrentState;
+  private channelStates = new Map<PublicSource, PublicChannelState>();
   private sequence = 0;
   private deploymentFingerprint?: string;
 
@@ -161,12 +180,15 @@ export class PublicEventPublisher {
   }
 
   emit(event: PublicDomainEvent): void {
+    this.applyChannelUpdate(event);
     if ("task" in event) {
       if (event.type === "task_started") {
         this.activeRuns.add(event.task.activityKey);
+        this.activeRunSources.set(event.task.activityKey, event.task.source);
       }
       if (event.type === "task_completed" || event.type === "task_failed") {
         this.activeRuns.delete(event.task.activityKey);
+        this.activeRunSources.delete(event.task.activityKey);
       }
     }
 
@@ -177,16 +199,10 @@ export class PublicEventPublisher {
 
   setIdleIfNoActiveRuns(): void {
     if (this.activeRuns.size > 0) return;
+    this.clearIdleEligibleChannels();
     const last = this.events.at(-1);
     if (last?.type === "agent_idle") {
-      this.current = {
-        ...this.buildIdleState(last.ts),
-        // Preserve the cumulative counters; rebuilding idle state must not
-        // reset tasksHandled/tasksCompleted/tasksFailed (which would zero the
-        // counts on every restart/deploy).
-        stats: this.current.stats,
-        activeCount: this.activeRuns.size,
-      };
+      this.current = this.buildCurrentState(last.ts, this.current.stats);
       this.writeSnapshot();
       return;
     }
@@ -199,16 +215,7 @@ export class PublicEventPublisher {
     if (this.events.length > this.maxEvents) {
       this.events = this.events.slice(-this.maxEvents);
     }
-    this.current = {
-      status: entry.status,
-      title: entry.title,
-      ...(entry.summary ? { summary: entry.summary } : {}),
-      updatedAt: entry.ts,
-      activeCount: this.activeRuns.size,
-      stats,
-      ...(entry.source ? { source: entry.source } : {}),
-      ...(entry.taskType ? { taskType: entry.taskType } : {}),
-    };
+    this.current = this.buildCurrentState(entry.ts, stats);
     this.writeSnapshot();
   }
 
@@ -238,96 +245,72 @@ export class PublicEventPublisher {
           title: "Agent idle",
         };
       case "task_received":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "received",
-          event.task,
-          `Incoming task: ${event.task.publicTitle}`,
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: `New ${event.task.publicTitle.toLowerCase()} activity.`,
+        });
       case "task_queued":
-        return this.buildTaskEntry(ts, event.type, "queued", event.task, "Task queued");
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: `${event.task.publicTitle} is queued.`,
+        });
       case "task_started":
-        return this.buildTaskEntry(ts, event.type, "running", event.task, "Task started");
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: `${event.task.publicTitle} is active.`,
+        });
+      case "task_waiting":
+        return this.buildTaskEntry(ts, event.type, "waiting", event.task, channelTitle(event.task.source), {
+          summary:
+            event.reason === "permission"
+              ? "Waiting for permission approval."
+              : "Waiting for follow-up answer.",
+        });
       case "skill_loaded":
         if (!SKILL_ALLOWLIST.has(event.skillName)) return undefined;
         return {
           id: this.nextId("skill"),
           ts,
           type: event.type,
-          status: "running",
-          title: `Loaded skill: ${event.skillName}`,
+          status: "active",
+          title: channelTitle(event.task.source),
+          summary: `Loaded skill ${event.skillName}.`,
           source: event.task.source,
           taskType: event.task.taskType,
           skillName: event.skillName,
         };
       case "research_started":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "researching",
-          event.task,
-          "Researching sources",
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: "Researching sources.",
+        });
       case "web_data_started":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "researching",
-          event.task,
-          "Gathering web data",
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: "Gathering web data.",
+        });
       case "draft_started":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "drafting",
-          event.task,
-          "Drafting response",
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: "Drafting response.",
+        });
       case "knowledge_update_started":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "knowledge",
-          event.task,
-          "Updating knowledge",
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: "Updating knowledge.",
+        });
       case "scheduled_report_started":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "running",
-          event.task,
-          "Preparing scheduled report",
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: "Preparing scheduled report.",
+        });
       case "task_completed":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "completed",
-          event.task,
-          "Task completed",
-          event.durationMs ? `Completed in ${formatDuration(event.durationMs)}.` : undefined,
-          event.durationMs,
-        );
+        return this.buildTaskEntry(ts, event.type, "idle", event.task, channelTitle(event.task.source), {
+          summary: event.durationMs
+            ? `${event.task.publicTitle} completed in ${formatDuration(event.durationMs)}.`
+            : `${event.task.publicTitle} completed.`,
+          durationMs: event.durationMs,
+        });
       case "task_failed":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "failed",
-          event.task,
-          "Task failed",
-          sanitizeFailure(event.error),
-        );
+        return this.buildTaskEntry(ts, event.type, "error", event.task, channelTitle(event.task.source), {
+          summary: sanitizeFailure(event.error) || `${event.task.publicTitle} failed.`,
+        });
       case "report_delivered":
-        return this.buildTaskEntry(
-          ts,
-          event.type,
-          "delivered",
-          event.task,
-          "Report delivered",
-        );
+        return this.buildTaskEntry(ts, event.type, "active", event.task, channelTitle(event.task.source), {
+          summary: "Response delivered.",
+        });
     }
   }
 
@@ -337,8 +320,7 @@ export class PublicEventPublisher {
     status: string,
     task: PublicTaskContext,
     title: string,
-    summary?: string,
-    durationMs?: number,
+    options?: { summary?: string; durationMs?: number },
   ): PublicActivityEntry {
     return {
       id: this.nextId(type),
@@ -346,10 +328,149 @@ export class PublicEventPublisher {
       type,
       status,
       title,
-      ...(summary ? { summary } : {}),
+      ...(options?.summary ? { summary: options.summary } : {}),
       source: task.source,
       taskType: task.taskType,
-      ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(options?.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
+    };
+  }
+
+  private applyChannelUpdate(event: PublicDomainEvent): void {
+    if (!("task" in event)) {
+      if (event.type === "agent_idle") {
+        this.clearIdleEligibleChannels();
+      }
+      return;
+    }
+
+    const ts = new Date().toISOString();
+    const source = event.task.source;
+    const activeCount = this.computeNextActiveCount(event);
+    const next = this.nextChannelState(event, ts, activeCount);
+    if (next) {
+      this.channelStates.set(source, next);
+    }
+  }
+
+  private computeNextActiveCount(event: Extract<PublicDomainEvent, { task: PublicTaskContext }>): number {
+    const source = event.task.source;
+    const currentCount = this.countActiveRunsForSource(source);
+    if (event.type === "task_started") {
+      return currentCount + (this.activeRunSources.has(event.task.activityKey) ? 0 : 1);
+    }
+    if (event.type === "task_completed" || event.type === "task_failed") {
+      return Math.max(0, currentCount - (this.activeRunSources.has(event.task.activityKey) ? 1 : 0));
+    }
+    return currentCount;
+  }
+
+  private nextChannelState(
+    event: Extract<PublicDomainEvent, { task: PublicTaskContext }>,
+    ts: string,
+    activeCount: number,
+  ): PublicChannelState | undefined {
+    const base: PublicChannelState = {
+      source: event.task.source,
+      status: "idle",
+      title: channelTitle(event.task.source),
+      updatedAt: ts,
+      activeCount,
+      taskType: event.task.taskType,
+      activityKey: event.task.activityKey,
+    };
+
+    switch (event.type) {
+      case "task_received":
+      case "task_queued":
+      case "task_started":
+      case "research_started":
+      case "web_data_started":
+      case "draft_started":
+      case "knowledge_update_started":
+      case "scheduled_report_started":
+      case "report_delivered":
+        return {
+          ...base,
+          status: "active",
+          summary: `${event.task.publicTitle} active.`,
+        };
+      case "task_waiting":
+        return {
+          ...base,
+          status: "waiting",
+          summary:
+            event.reason === "permission"
+              ? "Waiting for permission approval."
+              : "Waiting for follow-up answer.",
+        };
+      case "skill_loaded":
+        if (!SKILL_ALLOWLIST.has(event.skillName)) return undefined;
+        return {
+          ...base,
+          status: activeCount > 0 ? "active" : "idle",
+          summary: `Loaded skill ${event.skillName}.`,
+        };
+      case "task_completed":
+        return {
+          ...base,
+          status: activeCount > 0 ? "active" : "idle",
+          summary: event.durationMs
+            ? `${event.task.publicTitle} completed in ${formatDuration(event.durationMs)}.`
+            : `${event.task.publicTitle} completed.`,
+        };
+      case "task_failed":
+        return {
+          ...base,
+          status: "error",
+          summary: sanitizeFailure(event.error) || `${event.task.publicTitle} failed.`,
+        };
+    }
+  }
+
+  private countActiveRunsForSource(source: PublicSource): number {
+    let count = 0;
+    for (const runSource of this.activeRunSources.values()) {
+      if (runSource === source) count += 1;
+    }
+    return count;
+  }
+
+  private clearIdleEligibleChannels(): void {
+    for (const [source, state] of this.channelStates.entries()) {
+      if (this.countActiveRunsForSource(source) > 0) continue;
+      if (state.status === "waiting" || state.status === "error") continue;
+      this.channelStates.set(source, {
+        ...state,
+        status: "idle",
+        summary: state.summary,
+        updatedAt: new Date().toISOString(),
+        activeCount: 0,
+      });
+    }
+  }
+
+  private buildCurrentState(ts: string, stats: PublicActivityStats): PublicCurrentState {
+    const channels = Array.from(this.channelStates.values()).sort(compareChannels);
+    const activeCount = this.activeRuns.size;
+    const focus = pickFocusChannel(channels);
+
+    if (!focus) {
+      return {
+        ...this.buildIdleState(ts),
+        stats,
+      };
+    }
+
+    return {
+      status: focus.status,
+      title: focus.title,
+      ...(focus.summary ? { summary: focus.summary } : {}),
+      updatedAt: ts,
+      activeCount,
+      stats,
+      source: focus.source,
+      ...(focus.taskType ? { taskType: focus.taskType } : {}),
+      channels,
     };
   }
 
@@ -357,9 +478,11 @@ export class PublicEventPublisher {
     return {
       status: "idle",
       title: "Agent idle",
+      summary: "No active channel activity.",
       updatedAt: ts,
       activeCount: 0,
       stats: { ...DEFAULT_STATS },
+      channels: Array.from(this.channelStates.values()).sort(compareChannels),
     };
   }
 
@@ -387,6 +510,7 @@ export class PublicEventPublisher {
         ...(this.deploymentFingerprint
           ? { deploymentFingerprint: this.deploymentFingerprint }
           : {}),
+        channels: Array.from(this.channelStates.values()).sort(compareChannels),
       },
     };
   }
@@ -404,10 +528,18 @@ export class PublicEventPublisher {
       this.events = eventsFile.events.slice(-this.maxEvents);
       this.sequence = this.events.length;
       this.deploymentFingerprint = eventsFile.meta?.deploymentFingerprint;
+      if (Array.isArray(eventsFile.meta?.channels)) {
+        this.channelStates = new Map(
+          eventsFile.meta.channels.map((channel) => [channel.source, channel]),
+        );
+      }
     }
 
     if (current) {
       this.current = normalizeCurrentState(current);
+      if (Array.isArray(current.channels) && current.channels.length > 0) {
+        this.channelStates = new Map(current.channels.map((channel) => [channel.source, channel]));
+      }
       // Older snapshots predate the stats field. Recover the counters from the
       // retained event log instead of falling back to zeros.
       if (!current.stats && this.events.length > 0) {
@@ -425,6 +557,7 @@ export class PublicEventPublisher {
           stats: deriveStatsFromEvents(this.events),
           ...(last.source ? { source: last.source } : {}),
           ...(last.taskType ? { taskType: last.taskType } : {}),
+          channels: Array.from(this.channelStates.values()).sort(compareChannels),
         };
       }
     }
@@ -522,6 +655,24 @@ export function buildPublicTaskContext(input: {
     };
   }
 
+  if (input.source === "session") {
+    return {
+      activityKey: input.activityKey,
+      source: input.source,
+      taskType: "agent-session",
+      publicTitle: "Agent session",
+    };
+  }
+
+  if (input.source === "telegram") {
+    return {
+      activityKey: input.activityKey,
+      source: input.source,
+      taskType: "chat-task",
+      publicTitle: "Chat task",
+    };
+  }
+
   return {
     activityKey: input.activityKey,
     source: input.source,
@@ -585,6 +736,9 @@ function normalizeCurrentState(current: PublicCurrentState): PublicCurrentState 
           tasksFailed: current.stats.tasksFailed || 0,
         }
       : { ...DEFAULT_STATS },
+    ...(Array.isArray(current.channels)
+      ? { channels: current.channels.map((channel) => ({ ...channel })) }
+      : {}),
   };
 }
 
@@ -592,6 +746,7 @@ function cloneCurrentState(current: PublicCurrentState): PublicCurrentState {
   return {
     ...current,
     stats: { ...current.stats },
+    ...(current.channels ? { channels: current.channels.map((channel) => ({ ...channel })) } : {}),
   };
 }
 
@@ -599,7 +754,16 @@ function cloneEventsFile(eventsFile: PublicActivityFile): PublicActivityFile {
   return {
     updatedAt: eventsFile.updatedAt,
     events: eventsFile.events.map((entry) => ({ ...entry })),
-    ...(eventsFile.meta ? { meta: { ...eventsFile.meta } } : {}),
+    ...(eventsFile.meta
+      ? {
+          meta: {
+            ...eventsFile.meta,
+            ...(eventsFile.meta.channels
+              ? { channels: eventsFile.meta.channels.map((channel) => ({ ...channel })) }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -661,4 +825,42 @@ function buildDeploymentSummary(event: DeploymentInfo): string | undefined {
     return metaLine ? `${message} · ${metaLine}` : message;
   }
   return metaLine || undefined;
+}
+
+function channelTitle(source: PublicSource): string {
+  switch (source) {
+    case "gmail":
+      return "Gmail";
+    case "telegram":
+      return "Telegram";
+    case "scheduler":
+      return "Scheduler";
+    case "workflow":
+      return "Workflow";
+    case "session":
+      return "OpenCode";
+  }
+}
+
+function compareChannels(left: PublicChannelState, right: PublicChannelState): number {
+  const statusWeight = (status: PublicChannelStatus): number => {
+    switch (status) {
+      case "waiting":
+        return 0;
+      case "active":
+        return 1;
+      case "error":
+        return 2;
+      case "idle":
+        return 3;
+    }
+  };
+
+  const statusDiff = statusWeight(left.status) - statusWeight(right.status);
+  if (statusDiff !== 0) return statusDiff;
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function pickFocusChannel(channels: PublicChannelState[]): PublicChannelState | undefined {
+  return channels.find((channel) => channel.status !== "idle") || channels[0];
 }

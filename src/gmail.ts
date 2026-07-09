@@ -416,6 +416,7 @@ export class GmailBridge {
               const started = await this.opencode.startGmailRun(
                 {
                   threadId,
+                  sourceChannel: "gmail",
                   messageId,
                   senderEmail,
                   senderName,
@@ -606,6 +607,7 @@ export class GmailBridge {
       // do not try to thread-reply from here. Scheduler boot marks orphaned
       // runs as errored and reports via fresh email.
       if (run.threadId.startsWith("scheduled-task:")) continue;
+      if (run.sourceChannel !== "gmail") continue;
 
       this.threadMeta.set(run.threadId, {
         senderEmail: run.senderEmail,
@@ -616,8 +618,8 @@ export class GmailBridge {
       this.publicTasks.set(
         run.threadId,
         buildPublicTaskContext({
-          activityKey: `gmail:${run.threadId}`,
-          source: run.threadId.startsWith("scheduled-task:") ? "scheduler" : "gmail",
+          activityKey: `${run.sourceChannel}:${run.threadId}`,
+          source: "gmail",
           subject: run.subject,
           textBody: run.lastUserText,
         }),
