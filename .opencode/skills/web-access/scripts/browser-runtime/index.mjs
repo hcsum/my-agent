@@ -60,13 +60,13 @@ export async function resolveRuntimeAvailability(config) {
   if (primary) availableModes.push('primary');
   if (dedicated) availableModes.push('dedicated');
   if (primary && dedicated) {
-    return { ok: true, provider: 'local', browser: dedicated.browserMode, browserId: dedicated.browserId, dedicatedProfileDir: dedicated.dedicatedProfileDir, port: dedicated.port, availableModes, selectedBecause: 'dedicated_preferred_when_both_available', local: dedicated };
-  }
-  if (dedicated) {
-    return { ok: true, provider: 'local', browser: dedicated.browserMode, browserId: dedicated.browserId, dedicatedProfileDir: dedicated.dedicatedProfileDir, port: dedicated.port, availableModes, selectedBecause: 'only_dedicated_available', local: dedicated };
+    return { ok: true, provider: 'local', browser: primary.browserMode, browserId: null, dedicatedProfileDir: null, port: primary.port, availableModes, selectedBecause: 'primary_preferred_when_both_available', local: primary };
   }
   if (primary) {
     return { ok: true, provider: 'local', browser: primary.browserMode, browserId: null, dedicatedProfileDir: null, port: primary.port, availableModes, selectedBecause: 'only_primary_available', local: primary };
+  }
+  if (dedicated) {
+    return { ok: true, provider: 'local', browser: dedicated.browserMode, browserId: dedicated.browserId, dedicatedProfileDir: dedicated.dedicatedProfileDir, port: dedicated.port, availableModes, selectedBecause: 'only_dedicated_available', local: dedicated };
   }
   return {
     ok: false,

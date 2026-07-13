@@ -62,6 +62,7 @@ open -na "<Browser App Name>" --args \
 - **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
 - 自动检查不做跨 session 偏好记忆；依据当前可用连接实时判断（主力 `DevToolsActivePort` + `~/.web-access/*-dedicated-profile`）。
 - 自动检查只根据 `DevToolsActivePort` 判断连接状态，不扫描硬编码端口。
+- 未显式指定模式时，自动检查在两者都可用时优先主力浏览器；只有主力不可用时才回落到专用浏览器。
 
 ## 联网工具选择
 
@@ -143,28 +144,28 @@ node ./scripts/find-url.mjs [关键词...] [--only bookmarks|history] [--limit N
 三种调用形式（`provider`/`selectedMode` 等 JSON 字段含义见上文「前置检查」）：
 
 ```bash
-node ./scripts/check-deps.mjs                                  # 自动选择：在可用连接里选，两者都可用时优先 dedicated
+node ./scripts/check-deps.mjs                                  # 自动选择：在可用连接里选，两者都可用时优先 primary
 node ./scripts/check-deps.mjs --browser primary                # 显式主力浏览器
 node ./scripts/check-deps.mjs --browser dedicated --browser-id <browser-id>  # 显式专用浏览器
 ```
 
 脚本会检查 Node.js、浏览器调试端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
 
-### 何时主动切到主力浏览器
+### 何时主动切到专用浏览器
 
-默认走 dedicated 即可。但任务需要**主力浏览器里特有的登录态/会话**时，必须显式 `--browser primary`，否则自动选模式会选到 dedicated，看不到目标内容。典型触发：
+默认先走 primary。但任务明确更适合隔离环境或独立登录态时，必须显式 `--browser dedicated --browser-id <browser-id>`。典型触发：
 
-- 用户已在主力浏览器打开了目标页面（如 Ahrefs / Semrush / GSC dashboard / 内部公司系统），且让你读取那里的数据
-- 任务依赖主力浏览器里登录的付费 SaaS（dedicated profile 没登录）
-- 用户明确说 "用主力浏览器" / "use my main browser"
+- 用户明确说要与日常浏览隔离，避免碰到自己的主力 session / tab / 插件环境
+- 任务需要一个长期稳定、独立保存登录态的 automation profile
+- 用户明确说 "用专用浏览器" / "use dedicated browser"
 
-切换是 proxy 全局状态切换：调 `--browser primary` 会 shutdown 当前 proxy 再起一个连主力。代价：
+切换是 proxy 全局状态切换：调 `--browser dedicated` 会 shutdown 当前 proxy 再起一个连专用浏览器。代价：
 
-- 之前 dedicated 上拿到的 targetId 全部失效，需要重新拿 tab
+- 之前 primary 上拿到的 targetId 全部失效，需要重新拿 tab
 - 浏览器本身的登录态/cookie 不动
 - Proxy 同一时刻只能指向一个浏览器，不能并行
 
-任务做完如需回到 dedicated，再次显式 `--browser dedicated`。
+任务做完如需回到 primary，再次显式 `--browser primary`。
 
 ### Proxy API
 

@@ -53,8 +53,8 @@ Don't schedule one-shot requests with no future component (do them inline), or v
 
 ## Web access in this repo
 
-- Default to the dedicated local browser path for `web-access`.
-- Start with `node .opencode/skills/web-access/scripts/check-deps.mjs --browser dedicated --browser-id brave`, which pins `dedicated + brave + 9333`.
+- Default to the primary local browser path for `web-access`.
+- Start with `node .opencode/skills/web-access/scripts/check-deps.mjs --browser primary`.
 - Treat `curl -s http://127.0.0.1:3456/health` and `curl -s http://127.0.0.1:3456/targets` as the quick smoke test.
-- Use `primary` only when the task explicitly depends on the user's main-browser session or the user asks for it.
-- The dedicated path is verified to work from the sandbox via `127.0.0.1`, so do not escalate just to reach the local CDP proxy.
+- Use `dedicated` only when the task explicitly depends on an isolated browser session or the user asks for it.
+- The local CDP proxy is reachable from the sandbox via `127.0.0.1`, so do not escalate just to reach it.
