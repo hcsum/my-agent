@@ -53,8 +53,9 @@ Don't schedule one-shot requests with no future component (do them inline), or v
 
 ## Web access in this repo
 
-- Default to the primary local browser path for `web-access`.
-- Start with `node .opencode/skills/web-access/scripts/check-deps.mjs --browser primary`.
+- Default to the auto local browser path for `web-access`.
+- Start with `node .opencode/skills/web-access/scripts/check-deps.mjs`.
 - Treat `curl -s http://127.0.0.1:3456/health` and `curl -s http://127.0.0.1:3456/targets` as the quick smoke test.
-- Use `dedicated` only when the task explicitly depends on an isolated browser session or the user asks for it.
+- Auto mode should prefer `primary` only when it is immediately usable; if `primary` still needs remote-debugging confirmation or cannot be used right away, fall back to `dedicated`.
+- Use explicit `--browser primary` only when the task definitely depends on the user's main-browser session or the user asks for it.
 - The local CDP proxy is reachable from the sandbox via `127.0.0.1`, so do not escalate just to reach it.

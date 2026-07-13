@@ -48,7 +48,7 @@ The upstream project is centered on connecting to the user's everyday browser se
 - `primary`: connect to the user's normal browser session and reuse its login state
 - `dedicated`: connect to an isolated browser profile created only for automation
 
-When both are available, this repository prefers `primary` by default and only switches to `dedicated` when the task actually benefits from an isolated automation session.
+When both are discoverable, this repository first attempts `primary` and uses it if the agent can connect immediately. If `primary` still needs remote-debugging confirmation or cannot be used right away, it falls back to `dedicated`.
 
 ### 3. Multi-browser local discovery instead of a single preferred browser path
 
@@ -169,7 +169,7 @@ In practical terms:
 - otherwise the provider is `local`
 - within `local`, explicit mode requests win
 - if no local mode is explicitly requested, the runtime checks live availability
-- when both local modes are available, `primary` is preferred
+- auto mode first tries `primary`; if it is not immediately usable, it falls back to `dedicated`
 
 This is why the repository talks about `provider` and `mode` separately instead of flattening everything into one list of browser types.
 
@@ -280,15 +280,15 @@ The first decision point in browser automation is not "what page should I open?"
 
 That is why preflight returns structured JSON. The agent can make reliable branching decisions without guessing from free-form output.
 
-### Primary browser by default when possible
+### Immediate primary, otherwise dedicated
 
-A primary session is usually the fastest path for agent work:
+The repository distinguishes between a browser being merely discoverable and being immediately usable by the agent.
 
-- it reuses the user's existing authenticated state immediately
-- it preserves access to the same bookmarks, extensions, and session context the user already relies on
-- it matches tasks that refer to "the page I already have open" or "my logged-in account"
+- `primary` is preferred when it is already authorized and can be used right away
+- `dedicated` is the fallback when `primary` still needs a permission confirmation or cannot be connected to immediately
+- `dedicated` remains useful for long-running isolated automation once the task explicitly prefers that path
 
-This repository therefore prefers `primary` when both local modes are available.
+This keeps auto mode aligned with real session availability instead of only weak detection signals.
 
 ### Explicit user intervention only when needed
 
