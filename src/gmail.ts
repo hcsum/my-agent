@@ -10,9 +10,11 @@ import { ProxyAgent, fetch as undiciFetch } from "undici";
 import {
   clearPendingPermission,
   clearPendingQuestion,
+  getLatestGmailThreadIdForCanonicalThread,
   getPendingPermission,
   getPendingQuestion,
   getThreadSessionLink,
+  getThreadRun,
   incrementThreadFailures,
   isProcessed,
   listActiveThreadRuns,
@@ -46,6 +48,7 @@ import type { AppConfig } from "./types.js";
 import { WorkflowRunner } from "./workflow.js";
 
 interface ThreadMeta {
+  gmailThreadId: string;
   senderEmail: string;
   senderName: string;
   subject: string;
@@ -259,6 +262,7 @@ export class GmailBridge {
     if (!this.gmail) return;
     const stopClaimHeartbeat = this.startClaimHeartbeat(messageId);
     let threadId = messageId;
+    let gmailThreadId = messageId;
     let subject = "(no subject)";
     let senderEmail = "";
     let publicTask: PublicTaskContext | undefined;
@@ -274,7 +278,9 @@ export class GmailBridge {
 
       const message = res.data;
       const headers = message.payload?.headers || [];
-      threadId = message.threadId || messageId;
+      gmailThreadId = message.threadId || messageId;
+      const threadLink = getThreadSessionLink(gmailThreadId);
+      threadId = threadLink?.canonicalThreadId || gmailThreadId;
 
       const fromHeader =
         headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
@@ -331,6 +337,7 @@ export class GmailBridge {
       }
 
       this.threadMeta.set(threadId, {
+        gmailThreadId,
         senderEmail,
         senderName,
         subject,
@@ -388,9 +395,9 @@ export class GmailBridge {
       // the scheduled session. When the user replies on that thread, reuse the
       // bound sessionKey so the conversation continues the same OpenCode
       // session instead of starting a fresh gmail:<threadId> one.
-      const sessionLink = getThreadSessionLink(threadId);
-      const sessionKey = sessionLink?.sessionKey || `gmail:${threadId}`;
-      const sessionTitle = sessionLink?.sessionTitle || `Gmail ${subject}`;
+      const sessionKey = threadLink?.sessionKey || `gmail:${threadId}`;
+      const sessionTitle =
+        threadLink?.sessionTitle || buildGmailSessionTitle(subject, textBody);
 
       const queuedAt = Date.now();
       const result = workflowCommand
@@ -610,6 +617,8 @@ export class GmailBridge {
       if (run.sourceChannel !== "gmail") continue;
 
       this.threadMeta.set(run.threadId, {
+        gmailThreadId:
+          getLatestGmailThreadIdForCanonicalThread(run.threadId) || run.threadId,
         senderEmail: run.senderEmail,
         senderName: run.senderName,
         subject: run.subject,
@@ -756,6 +765,17 @@ export class GmailBridge {
   // thread) so failure recovery invalidates the session actually in use.
   private sessionKeyForThread(threadId: string): string {
     return getThreadSessionLink(threadId)?.sessionKey || `gmail:${threadId}`;
+  }
+
+  private sessionTitleForThread(threadId: string): string {
+    const linkedTitle = getThreadSessionLink(threadId)?.sessionTitle;
+    if (linkedTitle) return linkedTitle;
+
+    const runTitle = getThreadRun(threadId)?.sessionTitle;
+    if (runTitle) return runTitle;
+
+    const meta = this.threadMeta.get(threadId);
+    return buildGmailSessionTitle(meta?.subject || "", "");
   }
 
   private getAgentInboxAddress(): string | undefined {
@@ -941,6 +961,10 @@ export class GmailBridge {
     const subject = meta.subject.startsWith("Re:")
       ? meta.subject
       : `Re: ${meta.subject}`;
+    const gmailThreadId =
+      meta.gmailThreadId ||
+      getLatestGmailThreadIdForCanonicalThread(threadId) ||
+      threadId;
 
     const references = meta.messageId
       ? [
@@ -967,14 +991,22 @@ export class GmailBridge {
         userId: "me",
         requestBody: {
           raw: encoded,
-          threadId,
+          threadId: gmailThreadId,
         },
       });
       const gmailMessageId = response.data.id || "";
+      const responseThreadId = response.data.threadId || gmailThreadId;
+      meta.gmailThreadId = responseThreadId;
+      upsertThreadSessionLink({
+        gmailThreadId: responseThreadId,
+        canonicalThreadId: threadId,
+        sessionKey: this.sessionKeyForThread(threadId),
+        sessionTitle: this.sessionTitleForThread(threadId),
+      });
       recordOutboundEmail({
         deliveryKind: "thread_reply",
         threadId,
-        gmailThreadId: response.data.threadId || threadId,
+        gmailThreadId: responseThreadId,
         gmailMessageId,
         recipientEmail: meta.senderEmail,
         subject,
@@ -983,14 +1015,14 @@ export class GmailBridge {
         error: "",
       });
       console.log(
-        `[gmail] reply sent thread=${threadId} message=${gmailMessageId || "(missing)"} to=${meta.senderEmail} subject=${subject}`,
+        `[gmail] reply sent thread=${threadId} gmailThread=${responseThreadId} message=${gmailMessageId || "(missing)"} to=${meta.senderEmail} subject=${subject}`,
       );
     } catch (error) {
       const errorMessage = extractErrorMessage(error);
       recordOutboundEmail({
         deliveryKind: "thread_reply",
         threadId,
-        gmailThreadId: threadId,
+        gmailThreadId,
         gmailMessageId: "",
         recipientEmail: meta.senderEmail,
         subject,
@@ -1380,30 +1412,44 @@ function isReplyHeader(line: string): boolean {
   );
 }
 
-function parsePermissionResponse(text: string): PermissionResponse | undefined {
-  const normalized = text.trim().toUpperCase();
+function buildGmailSessionTitle(subject: string, textBody: string): string {
+  const normalizedSubject = normalizeSessionTitleFragment(subject);
+  const normalizedBody = normalizeSessionTitleFragment(textBody.split("\n")[0] || "");
+  const title = normalizedSubject || normalizedBody || "Untitled request";
+  return `Gmail ${title}`;
+}
 
-  if (
-    normalized === "APPROVE" ||
-    normalized.startsWith("APPROVE ") ||
-    normalized === "ALLOW" ||
-    normalized.startsWith("ALLOW ") ||
-    normalized === "YES"
-  ) {
+function normalizeSessionTitleFragment(value: string): string {
+  const normalized = value
+    .replace(/^(re|fwd|fw)\s*:\s*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized || normalized.toLowerCase() === "(no subject)") {
+    return "";
+  }
+
+  return normalized.slice(0, 72);
+}
+
+function parsePermissionResponse(text: string): PermissionResponse | undefined {
+  const firstLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  const normalized = (firstLine || text.trim())
+    .toUpperCase()
+    .replace(/[.!?。！？]+$/g, "");
+
+  if (/^(APPROVE|ALLOW|YES)\b/.test(normalized)) {
     return "once";
   }
 
-  if (normalized === "ALWAYS" || normalized.startsWith("ALWAYS ")) {
+  if (/^ALWAYS\b/.test(normalized)) {
     return "always";
   }
 
-  if (
-    normalized === "REJECT" ||
-    normalized.startsWith("REJECT ") ||
-    normalized === "DENY" ||
-    normalized.startsWith("DENY ") ||
-    normalized === "NO"
-  ) {
+  if (/^(REJECT|DENY|NO)\b/.test(normalized)) {
     return "reject";
   }
 

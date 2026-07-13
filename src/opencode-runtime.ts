@@ -218,6 +218,7 @@ export class OpencodeRuntime {
       sourceChannel: request.sourceChannel,
       sessionKey: request.sessionKey,
       sessionId,
+      sessionTitle: request.sessionTitle,
       gmailMessageId: request.messageId,
       senderEmail: request.senderEmail,
       senderName: request.senderName,
@@ -1020,7 +1021,7 @@ export class OpencodeRuntime {
       const sessionId = await this.sessionManager.getOrCreateSessionId({
         channel: run.meta.sourceChannel,
         sessionKey: run.sessionKey,
-        sessionTitle: run.meta.subject,
+        sessionTitle: run.meta.sessionTitle,
       });
 
       const now = Date.now();
@@ -1121,7 +1122,7 @@ export class OpencodeRuntime {
       const sessionId = await this.sessionManager.getOrCreateSessionId({
         channel: run.meta.sourceChannel,
         sessionKey: run.sessionKey,
-        sessionTitle: run.meta.subject,
+        sessionTitle: run.meta.sessionTitle,
       });
       const now = Date.now();
       this.sessionToThread.delete(run.sessionId);

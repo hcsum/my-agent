@@ -39,6 +39,7 @@ export interface ThreadRunRecord {
   sourceChannel: string;
   sessionKey: string;
   sessionId: string;
+  sessionTitle: string;
   gmailMessageId: string;
   senderEmail: string;
   senderName: string;
@@ -64,6 +65,7 @@ export interface OutboundEmailRecord {
 }
 
 export interface ThreadSessionLink {
+  canonicalThreadId: string;
   sessionKey: string;
   sessionTitle: string;
 }
@@ -162,21 +164,32 @@ export function recordOutboundEmail(email: OutboundEmailRecord): void {
 // user-triggered thread once the user replies.
 export function upsertThreadSessionLink(params: {
   gmailThreadId: string;
+  canonicalThreadId?: string;
   sessionKey: string;
   sessionTitle: string;
 }): void {
   db.prepare(
     `INSERT INTO thread_session_links (
        gmail_thread_id,
+       canonical_thread_id,
        session_key,
        session_title,
+       updated_at_ms,
        created_at
-     ) VALUES (?, ?, ?, datetime('now'))
+     ) VALUES (?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(gmail_thread_id) DO UPDATE SET
+       canonical_thread_id = excluded.canonical_thread_id,
        session_key = excluded.session_key,
        session_title = excluded.session_title,
+       updated_at_ms = excluded.updated_at_ms,
        created_at = datetime('now')`,
-  ).run(params.gmailThreadId, params.sessionKey, params.sessionTitle);
+  ).run(
+    params.gmailThreadId,
+    params.canonicalThreadId || params.gmailThreadId,
+    params.sessionKey,
+    params.sessionTitle,
+    Date.now(),
+  );
 }
 
 export function getThreadSessionLink(
@@ -184,20 +197,41 @@ export function getThreadSessionLink(
 ): ThreadSessionLink | undefined {
   const row = db
     .prepare(
-      `SELECT session_key, session_title
+      `SELECT canonical_thread_id, session_key, session_title
        FROM thread_session_links
        WHERE gmail_thread_id = ?`,
     )
     .get(gmailThreadId) as
-    | { session_key: string; session_title: string }
+    | {
+        canonical_thread_id: string;
+        session_key: string;
+        session_title: string;
+      }
     | undefined;
 
   if (!row) return undefined;
 
   return {
+    canonicalThreadId: row.canonical_thread_id || gmailThreadId,
     sessionKey: row.session_key,
     sessionTitle: row.session_title,
   };
+}
+
+export function getLatestGmailThreadIdForCanonicalThread(
+  canonicalThreadId: string,
+): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT gmail_thread_id
+       FROM thread_session_links
+       WHERE canonical_thread_id = ?
+       ORDER BY updated_at_ms DESC, created_at DESC
+       LIMIT 1`,
+    )
+    .get(canonicalThreadId) as { gmail_thread_id: string } | undefined;
+
+  return row?.gmail_thread_id;
 }
 
 export function getPendingPermission(
@@ -350,6 +384,7 @@ export function getThreadRun(threadId: string): ThreadRunRecord | undefined {
          source_channel,
          session_key,
          session_id,
+         session_title,
          gmail_message_id,
          sender_email,
          sender_name,
@@ -376,6 +411,7 @@ export function listActiveThreadRuns(): ThreadRunRecord[] {
          source_channel,
          session_key,
          session_id,
+         session_title,
          gmail_message_id,
          sender_email,
          sender_name,
@@ -402,6 +438,7 @@ export function upsertThreadRun(run: ThreadRunRecord): void {
        source_channel,
        session_key,
        session_id,
+       session_title,
        gmail_message_id,
        sender_email,
        sender_name,
@@ -412,11 +449,12 @@ export function upsertThreadRun(run: ThreadRunRecord): void {
        last_error,
        started_at_ms,
        updated_at_ms
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(thread_id) DO UPDATE SET
        source_channel = excluded.source_channel,
        session_key = excluded.session_key,
        session_id = excluded.session_id,
+       session_title = excluded.session_title,
        gmail_message_id = excluded.gmail_message_id,
        sender_email = excluded.sender_email,
        sender_name = excluded.sender_name,
@@ -432,6 +470,7 @@ export function upsertThreadRun(run: ThreadRunRecord): void {
     run.sourceChannel,
     run.sessionKey,
     run.sessionId,
+    run.sessionTitle,
     run.gmailMessageId,
     run.senderEmail,
     run.senderName,
@@ -556,6 +595,7 @@ interface ThreadRunRow {
   source_channel: string;
   session_key: string;
   session_id: string;
+  session_title: string;
   gmail_message_id: string;
   sender_email: string;
   sender_name: string;
@@ -574,6 +614,7 @@ function mapThreadRunRow(row: ThreadRunRow): ThreadRunRecord {
     sourceChannel: row.source_channel,
     sessionKey: row.session_key,
     sessionId: row.session_id,
+    sessionTitle: row.session_title,
     gmailMessageId: row.gmail_message_id,
     senderEmail: row.sender_email,
     senderName: row.sender_name,
@@ -665,6 +706,7 @@ function createSchema(): void {
       source_channel TEXT NOT NULL DEFAULT 'gmail',
       session_key TEXT NOT NULL,
       session_id TEXT NOT NULL,
+      session_title TEXT NOT NULL DEFAULT '',
       gmail_message_id TEXT NOT NULL DEFAULT '',
       sender_email TEXT NOT NULL DEFAULT '',
       sender_name TEXT NOT NULL DEFAULT '',
@@ -685,8 +727,10 @@ function createSchema(): void {
 
     CREATE TABLE IF NOT EXISTS thread_session_links (
       gmail_thread_id TEXT PRIMARY KEY,
+      canonical_thread_id TEXT NOT NULL DEFAULT '',
       session_key TEXT NOT NULL,
       session_title TEXT NOT NULL DEFAULT '',
+      updated_at_ms INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -728,6 +772,17 @@ function runMigrations(): void {
   ensureColumn("pending_permissions", "pattern", "pattern TEXT NOT NULL DEFAULT ''");
   ensureColumn("pending_permissions", "updated_at", "updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
   ensureColumn("thread_runs", "source_channel", "source_channel TEXT NOT NULL DEFAULT 'gmail'");
+  ensureColumn("thread_runs", "session_title", "session_title TEXT NOT NULL DEFAULT ''");
+  ensureColumn(
+    "thread_session_links",
+    "canonical_thread_id",
+    "canonical_thread_id TEXT NOT NULL DEFAULT ''",
+  );
+  ensureColumn(
+    "thread_session_links",
+    "updated_at_ms",
+    "updated_at_ms INTEGER NOT NULL DEFAULT 0",
+  );
 }
 
 function ensureColumn(table: string, column: string, definition: string): void {
