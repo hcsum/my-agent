@@ -42,10 +42,12 @@ async function main(): Promise<void> {
   initDatabase();
   // Spawn the OpenCode server in-process (with the code-injected provider
   // config) before connecting to it, then bind the bridge's clients to it.
-  const server =
-    config.provider === "opencode" && config.providers.opencode
-      ? await startOpencodeServer(config.providers.opencode.baseUrl)
-      : undefined;
+  // Decoupled from the active provider: whenever OPENCODE_BASE_URL is set we
+  // run the server so external clients (e.g. the Telegram bot) can connect,
+  // even when the bridge itself routes its own work through the claude provider.
+  const server = config.providers.opencode
+    ? await startOpencodeServer(config.providers.opencode.baseUrl)
+    : undefined;
   const queue = new SerialQueue(publicActivity);
   const provider = createProvider({ config, publicActivity });
   const orchestrator = new AppOrchestrator(provider);
