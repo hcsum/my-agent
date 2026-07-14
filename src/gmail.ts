@@ -1471,15 +1471,18 @@ function buildPermissionPrompt(
     remindOnly
       ? "This thread is waiting for your approval before I can continue."
       : "I need your approval before I can continue this request.",
-    `Permission: ${permission.title || permission.type}`,
+    "",
+    `**Permission:** ${permission.title || permission.type}`,
   ];
 
   if (permission.pattern) {
-    lines.push(`Target: ${permission.pattern}`);
+    lines.push("");
+    lines.push(`**Target:** ${permission.pattern}`);
   }
 
+  lines.push("");
   lines.push(
-    "Reply with APPROVE to allow once, ALWAYS to remember this permission, or REJECT to deny it.",
+    "Reply with **APPROVE** to allow once, **ALWAYS** to remember this permission, or **REJECT** to deny it.",
   );
 
   return lines.join("\n");
