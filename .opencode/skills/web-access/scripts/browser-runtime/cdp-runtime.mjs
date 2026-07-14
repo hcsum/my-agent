@@ -30,21 +30,45 @@ export class CdpRuntime {
     this.WS = this.WS || await getWebSocketImpl();
 
     this.connectingPromise = new Promise((resolve, reject) => {
+      let settled = false;
       this.ws = new this.WS(this.meta.wsUrl);
 
-      const onOpen = () => {
+      const removeListener = (eventName, handler) => {
+        this.ws?.removeEventListener?.(eventName, handler);
+        this.ws?.off?.(eventName, handler);
+        this.ws?.removeListener?.(eventName, handler);
+      };
+
+      const finish = (callback) => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        this.connectingPromise = null;
-        resolve();
+        callback();
+      };
+
+      const onOpen = () => {
+        finish(() => {
+          this.connectingPromise = null;
+          resolve();
+        });
       };
       const onError = (event) => {
-        cleanup();
-        this.connectingPromise = null;
-        this.ws = null;
-        const msg = event?.message || event?.error?.message || '连接失败';
-        reject(new Error(msg));
+        finish(() => {
+          this.connectingPromise = null;
+          this.ws = null;
+          const msg = event?.message || event?.error?.message || '连接失败';
+          reject(new Error(msg));
+        });
       };
       const onClose = () => {
+        if (!settled) {
+          finish(() => {
+            this.connectingPromise = null;
+            this.ws = null;
+            reject(new Error('浏览器连接已关闭'));
+          });
+          return;
+        }
         this.ws = null;
         this.sessions.clear();
         this.portGuardedSessions.clear();
@@ -69,9 +93,22 @@ export class CdpRuntime {
       };
 
       const cleanup = () => {
-        this.ws?.removeEventListener?.('open', onOpen);
-        this.ws?.removeEventListener?.('error', onError);
+        clearTimeout(timer);
+        removeListener('open', onOpen);
+        removeListener('error', onError);
+        removeListener('close', onClose);
+        removeListener('message', onMessage);
       };
+
+      const timer = setTimeout(() => {
+        finish(() => {
+          this.connectingPromise = null;
+          try { this.ws?.terminate?.(); } catch {}
+          try { this.ws?.close?.(); } catch {}
+          this.ws = null;
+          reject(new Error('连接浏览器超时'));
+        });
+      }, 5000);
 
       if (this.ws.on) {
         this.ws.on('open', onOpen);

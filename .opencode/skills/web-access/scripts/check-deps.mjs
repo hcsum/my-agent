@@ -67,10 +67,16 @@ async function ensureProxy(config) {
   if (
     health?.status === 'ok' &&
     health.provider === config.provider &&
-    health.browserMode === (config.browserMode || config.provider) &&
-    health.connected === true
+    health.browserMode === (config.browserMode || config.provider)
   ) {
-    return { ok: true, reusedExisting: true, restartedForModeSwitch: false };
+    if (health.connected === true) {
+      return { ok: true, reusedExisting: true, restartedForModeSwitch: false, restartedForDisconnect: false };
+    }
+
+    await httpGetJson(shutdownUrl, 2000);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    return ensureProxyAfterRestart(config, { restartedForDisconnect: true, restartedForModeSwitch: false });
   }
 
   let restartedForModeSwitch = false;
@@ -89,6 +95,12 @@ async function ensureProxy(config) {
     return { ok: true, reusedExisting: true, restartedForModeSwitch };
   }
 
+  return ensureProxyAfterRestart(config, { restartedForDisconnect: false, restartedForModeSwitch });
+}
+
+async function ensureProxyAfterRestart(config, flags) {
+  const targetsUrl = `http://127.0.0.1:${PROXY_PORT}/targets`;
+
   startProxyDetached(config);
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
@@ -96,7 +108,7 @@ async function ensureProxy(config) {
   for (let i = 1; i <= 15; i += 1) {
     const result = await httpGetJson(targetsUrl, 8000);
     if (Array.isArray(result)) {
-      return { ok: true, reusedExisting: false, restartedForModeSwitch, hint };
+      return { ok: true, reusedExisting: false, ...flags, hint };
     }
     if (i === 1) {
       hint = config.provider === 'browserbase'
@@ -111,7 +123,7 @@ async function ensureProxy(config) {
   return {
     ok: false,
     reusedExisting: false,
-    restartedForModeSwitch,
+    ...flags,
     hint,
     reason: 'proxy_connect_timeout',
     logFile: path.join(os.tmpdir(), 'cdp-proxy.log'),
