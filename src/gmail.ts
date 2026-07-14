@@ -1498,14 +1498,20 @@ function buildQuestionPrompt(
 
   question.questions.forEach((item, index) => {
     lines.push("");
-    lines.push(`${index + 1}. ${item.header}: ${item.question}`);
+    lines.push(`**${index + 1}. ${item.header}: ${item.question}**`);
     if (item.options.length > 0) {
-      lines.push(`Options: ${item.options.map((option) => option.label).join(", ")}`);
+      lines.push("");
+      lines.push("Options:");
+      for (const option of item.options) {
+        lines.push(`- ${option.label}`);
+      }
     }
     if (item.multiple) {
+      lines.push("");
       lines.push("You may choose multiple options by separating labels with commas.");
     }
     if (item.custom !== false) {
+      lines.push("");
       lines.push("Custom text is also allowed if none of the labels fit.");
     }
   });
