@@ -1,21 +1,56 @@
+export type ProviderName = "opencode" | "claude";
+
+export interface OpenCodeModelRef {
+  providerID: string;
+  modelID: string;
+}
+
+export type ClaudePermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan"
+  | "dontAsk"
+  | "auto";
+
+export interface OpencodeProviderConfig {
+  baseUrl: string;
+  serverUsername?: string;
+  serverPassword?: string;
+  model?: OpenCodeModelRef;
+  fallbackModel?: OpenCodeModelRef;
+}
+
+export interface ClaudeProviderConfig {
+  model?: string;
+  fallbackModel?: string;
+  workingDirectory?: string;
+  permissionMode?: ClaudePermissionMode;
+}
+
+export interface GmailChannelConfig {
+  inboxEmail?: string;
+  userEmail?: string;
+  scheduledResultsTo?: string;
+  pollIntervalMs: number;
+  newerThan: string;
+}
+
 export interface AppConfig {
-  opencodeBaseUrl: string;
-  opencodeServerUsername?: string;
-  opencodeServerPassword?: string;
+  provider: ProviderName;
+  providers: {
+    opencode?: OpencodeProviderConfig;
+    claude?: ClaudeProviderConfig;
+  };
+  channels: {
+    gmail?: GmailChannelConfig;
+  };
   stateFile: string;
   publicActivityDir: string;
   publicActivitySyncUrl?: string;
   publicActivitySyncToken?: string;
   publicActivityHeartbeatMs: number;
   publicActivitySyncTimeoutMs: number;
-  agentInboxEmail?: string;
-  userEmail?: string;
-  gmailTo?: string;
-  scheduledResultsTo?: string;
-  gmailPollIntervalMs: number;
-  gmailNewerThan: string;
-  opencodeModel?: { providerID: string; modelID: string };
-  opencodeModelFallback?: { providerID: string; modelID: string };
   userTimezone: string;
   schedulerApiPort: number;
   schedulerMaxTasks: number;
@@ -76,4 +111,14 @@ export interface QueueJob<T> {
   run: () => Promise<T>;
   resolve: (value: T | PromiseLike<T>) => void;
   reject: (reason?: unknown) => void;
+}
+
+export interface TurnInput {
+  text: string;
+  senderName: string;
+  chatTitle?: string;
+  timestamp: Date;
+  sessionKey?: string;
+  sessionTitle?: string;
+  sessionDirectory?: string;
 }

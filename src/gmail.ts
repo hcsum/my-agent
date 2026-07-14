@@ -30,8 +30,8 @@ import type {
   PendingPermissionRecord,
   PendingQuestionRecord,
 } from "./db.js";
+import { AppOrchestrator } from "./app/orchestrator.js";
 import type { ExecutionSlot } from "./execution-slot.js";
-import { OpencodeSession } from "./opencode.js";
 import {
   buildPublicTaskContext,
   type PublicEventPublisher,
@@ -78,12 +78,12 @@ export class GmailBridge {
 
   constructor(
     private readonly config: AppConfig,
-    private readonly opencode: OpencodeSession,
+    private readonly orchestrator: AppOrchestrator,
     private readonly queue: SerialQueue,
     private readonly publicActivity: PublicEventPublisher,
     private readonly executionSlot: ExecutionSlot,
   ) {
-    this.workflow = new WorkflowRunner(opencode, queue, publicActivity);
+    this.workflow = new WorkflowRunner(orchestrator, queue, publicActivity);
   }
 
   async launch(): Promise<void> {
@@ -148,7 +148,7 @@ export class GmailBridge {
     this.schedulePoll();
 
     console.log(
-      `[gmail] polling every ${this.config.gmailPollIntervalMs}ms; inbox=${this.getAgentInboxAddress() || "(unset)"}; user=${this.getUserAddress() || "(unset)"}`,
+      `[gmail] polling every ${this.config.channels.gmail?.pollIntervalMs || 10000}ms; inbox=${this.getAgentInboxAddress() || "(unset)"}; user=${this.getUserAddress() || "(unset)"}`,
     );
   }
 
@@ -197,10 +197,11 @@ export class GmailBridge {
     const backoffMs =
       this.consecutiveErrors > 0
         ? Math.min(
-            this.config.gmailPollIntervalMs * Math.pow(2, this.consecutiveErrors),
+            (this.config.channels.gmail?.pollIntervalMs || 10000) *
+              Math.pow(2, this.consecutiveErrors),
             30 * 60 * 1000,
           )
-        : this.config.gmailPollIntervalMs;
+        : (this.config.channels.gmail?.pollIntervalMs || 10000);
 
     this.pollTimer = setTimeout(() => {
       this.pollForMessages()
@@ -222,7 +223,7 @@ export class GmailBridge {
 
     const filters = [
       `to:${inbox}`,
-      `newer_than:${this.config.gmailNewerThan}`,
+      `newer_than:${this.config.channels.gmail?.newerThan || "3d"}`,
     ];
     const query = filters.join(" ");
     console.log(`[gmail] polling: ${query}`);
@@ -303,9 +304,14 @@ export class GmailBridge {
       const internalDateMs = parseMessageInternalDate(message.internalDate);
       const inboxAddress = this.getAgentInboxAddress();
 
-      if (isOlderThanWindow(internalDateMs, this.config.gmailNewerThan)) {
+      if (
+        isOlderThanWindow(
+          internalDateMs,
+          this.config.channels.gmail?.newerThan || "3d",
+        )
+      ) {
         console.log(
-          `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.gmailNewerThan}`,
+          `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.channels.gmail?.newerThan || "3d"}`,
         );
         await this.markRead(messageId);
         markProcessed(messageId, threadId, subject, senderEmail);
@@ -379,7 +385,7 @@ export class GmailBridge {
         return;
       }
 
-      if (this.opencode.hasActiveGmailRun(threadId)) {
+      if (this.orchestrator.hasActiveRun(threadId)) {
         await this.sendReply(threadId, buildAlreadyRunningReply());
         await this.markRead(messageId);
         markProcessed(messageId, threadId, subject, senderEmail);
@@ -420,7 +426,7 @@ export class GmailBridge {
               const ensuredPublicTask = publicTask as PublicTaskContext;
               const images = await this.extractImages(messageId, message.payload);
               const opencodeStartedAt = Date.now();
-              const started = await this.opencode.startGmailRun(
+              const started = await this.orchestrator.startRun(
                 {
                   threadId,
                   sourceChannel: "gmail",
@@ -441,7 +447,7 @@ export class GmailBridge {
                 this.buildRuntimeCallbacks(threadId),
               );
               console.log(
-                `[gmail] opencode run start ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
+                `[gmail] agent run start ${messageId} in ${Date.now() - opencodeStartedAt}ms`,
               );
               if (!started.started || started.status !== "running") {
                 this.executionSlot.release(threadId);
@@ -450,9 +456,7 @@ export class GmailBridge {
             },
           );
 
-      console.log(
-        `[gmail] opencode slot released ${messageId} in ${Date.now() - queuedAt}ms`,
-      );
+      console.log(`[gmail] agent slot released ${messageId} in ${Date.now() - queuedAt}ms`);
 
       if (typeof result === "string") {
         await this.sendReply(threadId, result);
@@ -473,7 +477,7 @@ export class GmailBridge {
         `[gmail] thread ${threadId} has failed ${failures} time(s) consecutively`,
       );
       if (failures >= 2) {
-        await this.opencode.invalidateSession(this.sessionKeyForThread(threadId));
+        await this.orchestrator.invalidateSession(this.sessionKeyForThread(threadId));
       }
       if (publicTask) {
         this.publicActivity.emit({
@@ -514,7 +518,7 @@ export class GmailBridge {
     }
 
     try {
-      await this.opencode.replyPermission(
+      await this.orchestrator.replyPermission(
         params.threadId,
         params.pendingPermission.permissionId,
         decision,
@@ -560,7 +564,7 @@ export class GmailBridge {
     }
 
     try {
-      await this.opencode.replyQuestion(
+      await this.orchestrator.replyQuestion(
         params.threadId,
         params.pendingQuestion.questionId,
         answers,
@@ -587,7 +591,7 @@ export class GmailBridge {
     console.error(`[gmail] ${kind} reply forwarding failed for thread ${threadId}`, err);
     const errorMessage = err instanceof Error ? err.message : String(err);
 
-    if (this.opencode.hasActiveGmailRun(threadId)) {
+    if (this.orchestrator.hasActiveRun(threadId)) {
       await this.sendReply(
         threadId,
         `I couldn't deliver your ${kind} reply this time (${errorMessage}). Please reply again with your response.`,
@@ -639,7 +643,7 @@ export class GmailBridge {
           `gmail resume ${run.threadId}`,
           this.getPublicTask(run.threadId),
           async () => {
-            const resumed = await this.opencode.resumeGmailRun(
+            const resumed = await this.orchestrator.resumeRun(
               run.threadId,
               this.buildRuntimeCallbacks(run.threadId),
             );
@@ -652,7 +656,7 @@ export class GmailBridge {
         continue;
       }
 
-      await this.opencode.resumeGmailRun(
+      await this.orchestrator.resumeRun(
         run.threadId,
         this.buildRuntimeCallbacks(run.threadId),
       );
@@ -779,11 +783,14 @@ export class GmailBridge {
   }
 
   private getAgentInboxAddress(): string | undefined {
-    return this.config.agentInboxEmail || this.config.gmailTo;
+    return this.config.channels.gmail?.inboxEmail;
   }
 
   private getUserAddress(): string | undefined {
-    return this.config.userEmail || this.config.scheduledResultsTo;
+    return (
+      this.config.channels.gmail?.userEmail ||
+      this.config.channels.gmail?.scheduledResultsTo
+    );
   }
 
   private getScheduledResultsRecipient(): string | undefined {
@@ -817,7 +824,7 @@ export class GmailBridge {
       onFailed: async (error) => {
         const failures = incrementThreadFailures(threadId);
         if (failures >= 2) {
-          await this.opencode.invalidateSession(this.sessionKeyForThread(threadId));
+          await this.orchestrator.invalidateSession(this.sessionKeyForThread(threadId));
         }
         await this.sendReply(threadId, buildFailureReply(error));
         const publicTask = this.publicTasks.get(threadId);

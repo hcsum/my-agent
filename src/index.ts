@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { AppOrchestrator } from "./app/orchestrator.js";
 import { loadConfig } from "./config.js";
 import { ExecutionSlot } from "./execution-slot.js";
-import { OpencodeSession } from "./opencode.js";
 import { startOpencodeServer } from "./opencode-server.js";
+import { createProvider } from "./providers/index.js";
 import { PublicEventPublisher } from "./public-activity.js";
 import { PublicActivityReplicator } from "./public-activity-sync.js";
 import { SerialQueue } from "./queue.js";
@@ -40,21 +41,25 @@ async function main(): Promise<void> {
   initDatabase();
   // Spawn the OpenCode server in-process (with the code-injected provider
   // config) before connecting to it, then bind the bridge's clients to it.
-  const server = await startOpencodeServer(config.opencodeBaseUrl);
+  const server =
+    config.provider === "opencode" && config.providers.opencode
+      ? await startOpencodeServer(config.providers.opencode.baseUrl)
+      : undefined;
   const queue = new SerialQueue(publicActivity);
-  const opencode = new OpencodeSession(config, publicActivity);
-  await opencode.healthcheck();
-  opencode.startBackgroundMonitoring();
+  const provider = createProvider({ config, publicActivity });
+  const orchestrator = new AppOrchestrator(provider);
+  await orchestrator.healthcheck();
+  orchestrator.startBackgroundMonitoring();
   publicActivity.setIdleIfNoActiveRuns();
 
   const launches: Promise<void>[] = [];
   let scheduler: Scheduler | undefined;
   let bridge: GmailBridge | undefined;
 
-  if (config.agentInboxEmail) {
+  if (config.channels.gmail?.inboxEmail) {
     bridge = new GmailBridge(
       config,
-      opencode,
+      orchestrator,
       queue,
       publicActivity,
       executionSlot,
@@ -67,7 +72,7 @@ async function main(): Promise<void> {
   launches.push(
     launchScheduler({
       config,
-      opencode,
+      orchestrator,
       queue,
       resultSink: bridge
         ? new GmailScheduledResultSink(bridge)
@@ -84,7 +89,7 @@ async function main(): Promise<void> {
   try {
     await Promise.all(launches);
   } catch (error) {
-    server.close();
+    server?.close();
     releaseLock();
     throw error;
   }
@@ -141,7 +146,7 @@ async function main(): Promise<void> {
     } catch (error) {
       console.error("[app] error during teardown", error);
     }
-    server.close();
+    server?.close();
     releaseLock();
     process.exit(0);
   };

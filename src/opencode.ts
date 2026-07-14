@@ -5,7 +5,12 @@ import {
   createOpencodeClient as createV2OpencodeClient,
 } from "@opencode-ai/sdk/v2/client";
 
-import type { AppConfig, PersistedState, ThreadRunStatus } from "./types.js";
+import type {
+  AppConfig,
+  PersistedState,
+  ThreadRunStatus,
+  TurnInput,
+} from "./types.js";
 import {
   OpencodeRuntime,
   type GmailRunRequest,
@@ -39,16 +44,6 @@ interface PromptResponse {
   };
 }
 
-export interface TurnInput {
-  text: string;
-  senderName: string;
-  chatTitle?: string;
-  timestamp: Date;
-  sessionKey?: string;
-  sessionTitle?: string;
-  sessionDirectory?: string;
-}
-
 const CHANNEL_SESSION_TITLES: Record<string, string> = {
   gmail: "Gmail Andy",
 };
@@ -66,12 +61,16 @@ export class OpencodeSession {
     publicActivity: PublicEventPublisher,
   ) {
     const fetch = this.buildFetch();
+    const opencode = config.providers.opencode;
+    if (!opencode) {
+      throw new Error("OpenCode provider configuration is missing");
+    }
     this.client = createV1OpencodeClient({
-      baseUrl: config.opencodeBaseUrl,
+      baseUrl: opencode.baseUrl,
       fetch,
     });
     this.runtimeClient = createV2OpencodeClient({
-      baseUrl: config.opencodeBaseUrl,
+      baseUrl: opencode.baseUrl,
       fetch,
     });
     this.runtime = new OpencodeRuntime(
@@ -108,8 +107,15 @@ export class OpencodeSession {
   async startGmailRun(
     request: GmailRunRequest,
     callbacks: RuntimeCallbacks,
-  ): Promise<{ started: boolean; status: ThreadRunStatus }> {
+  ): Promise<{ started: boolean; status: ThreadRunStatus; sessionId?: string }> {
     return this.runtime.startRun(request, callbacks);
+  }
+
+  async startRun(
+    request: GmailRunRequest,
+    callbacks: RuntimeCallbacks,
+  ): Promise<{ started: boolean; status: ThreadRunStatus; sessionId?: string }> {
+    return this.startGmailRun(request, callbacks);
   }
 
   async resumeGmailRun(
@@ -119,8 +125,19 @@ export class OpencodeSession {
     return this.runtime.resumeRun(threadId, callbacks);
   }
 
+  async resumeRun(
+    threadId: string,
+    callbacks: RuntimeCallbacks,
+  ): Promise<boolean> {
+    return this.resumeGmailRun(threadId, callbacks);
+  }
+
   hasActiveGmailRun(threadId: string): boolean {
     return this.runtime.hasActiveRun(threadId);
+  }
+
+  hasActiveRun(threadId: string): boolean {
+    return this.hasActiveGmailRun(threadId);
   }
 
   async replyPermission(
@@ -189,8 +206,8 @@ export class OpencodeSession {
       this.client.session.prompt({
         path: { id: sessionId },
         body: {
-          ...(this.config.opencodeModel
-            ? { model: this.config.opencodeModel }
+          ...(this.config.providers.opencode?.model
+            ? { model: this.config.providers.opencode.model }
             : {}),
           parts: [{ type: "text", text: body }],
         },
@@ -282,8 +299,8 @@ export class OpencodeSession {
 
   private buildFetch(): typeof fetch {
     const authHeader = buildBasicAuthHeader(
-      this.config.opencodeServerUsername,
-      this.config.opencodeServerPassword,
+      this.config.providers.opencode?.serverUsername,
+      this.config.providers.opencode?.serverPassword,
     );
 
     return async (input, init) => {

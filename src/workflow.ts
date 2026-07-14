@@ -9,7 +9,7 @@ import {
   captureWikiSnapshot,
   validateIngestResult,
 } from "./ingest-validator.js";
-import { OpencodeSession, type TurnInput } from "./opencode.js";
+import { AppOrchestrator } from "./app/orchestrator.js";
 import {
   buildPublicTaskContext,
   type PublicEventPublisher,
@@ -18,6 +18,7 @@ import {
 import { SerialQueue } from "./queue.js";
 import type {
   IngestLanguageMode,
+  TurnInput,
   WorkflowCommand,
   WorkflowJobKind,
 } from "./types.js";
@@ -39,7 +40,7 @@ interface WorkflowRequest {
 
 export class WorkflowRunner {
   constructor(
-    private readonly opencode: OpencodeSession,
+    private readonly orchestrator: AppOrchestrator,
     private readonly queue: SerialQueue,
     private readonly publicActivity?: PublicEventPublisher,
   ) {}
@@ -110,7 +111,7 @@ export class WorkflowRunner {
         const beforeSnapshot =
           request.command.kind === "ingest" ? captureWikiSnapshot() : undefined;
 
-        const response = await this.opencode.sendTurn(
+        const response = await this.orchestrator.sendTurn(
           request.sourceChannel,
           buildWorkflowTurnInput(request, jobId),
         );

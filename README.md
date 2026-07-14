@@ -1,13 +1,11 @@
-# My Opencode Agent
-
-My personal AI workspace. I run [Opencode](https://github.com/anomalyco/opencode) or Claude Code inside this repo and interact with the agent throughout the day — in person at the terminal, or remotely via a Gmail bridge when I'm away from my computer. There's also a copy running on a VPS so work can continue even when my machine is offline.
+# My Agent
 
 ## What's in here
 
 - **Skills** — a set of custom skills under `.opencode/skills/` that encode my workflows (see below)
 - **Gmail bridge** — an Opencode SDK integration that lets me send instructions by email and receive results back; the bridge also handles scheduled tasks
 - **Memory** — long-term memory via [mem0](https://github.com/mem0ai/mem0), plus `notes/` (see below)
-- **Notes** — a *separate* private git repo, checked out into `notes/`, that the agent and I maintain together. It holds my personal data, the agent's memory layers, research results, todos, and the LLM wiki. It's deliberately kept out of this repo: this repo is code and instructions; `notes/` is the data those instructions operate on. Its internal layout and rules live in `notes/AGENTS.md`.
+- **Notes** — a _separate_ private git repo, checked out into `notes/`, that the agent and I maintain together. It holds my personal data, the agent's memory layers, research results, todos, and the LLM wiki. It's deliberately kept out of this repo: this repo is code and instructions; `notes/` is the data those instructions operate on. Its internal layout and rules live in `notes/AGENTS.md`.
 - **LLM Wiki** — an accumulating knowledge base the agent reads from and writes to over time
 
 ## Why a central repo

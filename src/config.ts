@@ -2,21 +2,18 @@ import path from "node:path";
 
 import dotenv from "dotenv";
 
-import type { AppConfig } from "./types.js";
+import type {
+  AppConfig,
+  ClaudePermissionMode,
+  OpenCodeModelRef,
+  ProviderName,
+} from "./types.js";
 
 dotenv.config();
 
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
 function parseModel(
-  raw?: string,
-): { providerID: string; modelID: string } | undefined {
+  raw?: string | undefined,
+): OpenCodeModelRef | undefined {
   if (!raw?.trim()) return undefined;
   const slash = raw.indexOf("/");
   if (slash <= 0)
@@ -27,13 +24,87 @@ function parseModel(
   };
 }
 
+function parseProvider(raw?: string): ProviderName {
+  const value = raw?.trim().toLowerCase() || "opencode";
+  if (value === "opencode" || value === "claude") {
+    return value;
+  }
+  throw new Error(`PROVIDER must be "opencode" or "claude", got: ${raw}`);
+}
+
+function parseClaudePermissionMode(raw?: string): ClaudePermissionMode | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  const allowed: ClaudePermissionMode[] = [
+    "default",
+    "acceptEdits",
+    "bypassPermissions",
+    "plan",
+    "dontAsk",
+    "auto",
+  ];
+  if (allowed.includes(value as ClaudePermissionMode)) {
+    return value as ClaudePermissionMode;
+  }
+  throw new Error(
+    `CLAUDE_PERMISSION_MODE must be one of ${allowed.join(", ")}, got: ${raw}`,
+  );
+}
+
 export function loadConfig(): AppConfig {
+  const provider = parseProvider(
+    process.env.PROVIDER || process.env.AGENT_PROVIDER,
+  );
+  const opencodeBaseUrl = process.env.OPENCODE_BASE_URL?.trim();
+  const gmailInboxEmail =
+    process.env.AGENT_INBOX_EMAIL?.trim() ||
+    process.env.GMAIL_TO?.trim() ||
+    undefined;
+  const gmailUserEmail =
+    process.env.USER_EMAIL?.trim() ||
+    process.env.SCHEDULED_RESULTS_TO?.trim() ||
+    undefined;
+
+  if (provider === "opencode" && !opencodeBaseUrl) {
+    throw new Error("Missing required environment variable: OPENCODE_BASE_URL");
+  }
+
   return {
-    opencodeBaseUrl: required("OPENCODE_BASE_URL"),
-    opencodeServerUsername:
-      process.env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
-    opencodeServerPassword:
-      process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
+    provider,
+    providers: {
+      ...(opencodeBaseUrl
+        ? {
+            opencode: {
+              baseUrl: opencodeBaseUrl,
+              serverUsername:
+                process.env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
+              serverPassword:
+                process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
+              model: parseModel(process.env.OPENCODE_MODEL),
+              fallbackModel: parseModel(process.env.OPENCODE_MODEL_FALLBACK),
+            },
+          }
+        : {}),
+      claude: {
+        model: process.env.CLAUDE_MODEL?.trim() || undefined,
+        fallbackModel: process.env.CLAUDE_MODEL_FALLBACK?.trim() || undefined,
+        workingDirectory:
+          process.env.CLAUDE_WORKING_DIRECTORY?.trim() || process.cwd(),
+        permissionMode: parseClaudePermissionMode(
+          process.env.CLAUDE_PERMISSION_MODE,
+        ),
+      },
+    },
+    channels: {
+      gmail: {
+        inboxEmail: gmailInboxEmail,
+        userEmail: gmailUserEmail,
+        scheduledResultsTo:
+          process.env.SCHEDULED_RESULTS_TO?.trim() || undefined,
+        pollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
+        newerThan: process.env.GMAIL_NEWER_THAN?.trim() || "3d",
+      },
+    },
     stateFile:
       process.env.STATE_FILE?.trim() || path.join(".data", "state.json"),
     publicActivityDir:
@@ -47,21 +118,6 @@ export function loadConfig(): AppConfig {
       Number(process.env.PUBLIC_ACTIVITY_HEARTBEAT_MS) || 60000,
     publicActivitySyncTimeoutMs:
       Number(process.env.PUBLIC_ACTIVITY_SYNC_TIMEOUT_MS) || 10000,
-    agentInboxEmail:
-      process.env.AGENT_INBOX_EMAIL?.trim() ||
-      process.env.GMAIL_TO?.trim() ||
-      undefined,
-    userEmail:
-      process.env.USER_EMAIL?.trim() ||
-      process.env.SCHEDULED_RESULTS_TO?.trim() ||
-      undefined,
-    gmailTo: process.env.GMAIL_TO?.trim() || undefined,
-    scheduledResultsTo:
-      process.env.SCHEDULED_RESULTS_TO?.trim() || undefined,
-    gmailPollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
-    gmailNewerThan: process.env.GMAIL_NEWER_THAN?.trim() || "3d",
-    opencodeModel: parseModel(process.env.OPENCODE_MODEL),
-    opencodeModelFallback: parseModel(process.env.OPENCODE_MODEL_FALLBACK),
     userTimezone: process.env.USER_TIMEZONE?.trim() || "UTC",
     schedulerApiPort: Number(process.env.SCHEDULER_API_PORT) || 4097,
     schedulerMaxTasks: Number(process.env.SCHEDULER_MAX_TASKS) || 20,

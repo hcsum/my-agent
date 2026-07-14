@@ -1,6 +1,6 @@
+import type { AppOrchestrator } from "../app/orchestrator.js";
 import type { ExecutionSlot } from "../execution-slot.js";
 import type { GmailRunRequest, RuntimeCallbacks } from "../opencode-runtime.js";
-import type { OpencodeSession } from "../opencode.js";
 import {
   buildPublicTaskContext,
   type PublicEventPublisher,
@@ -17,7 +17,7 @@ const PRIOR_REPORT_MAX_CHARS = 12000;
 
 export interface ExecutorDeps {
   config: AppConfig;
-  opencode: OpencodeSession;
+  orchestrator: AppOrchestrator;
   queue: SerialQueue;
   publicActivity: PublicEventPublisher;
   executionSlot: ExecutionSlot;
@@ -56,7 +56,10 @@ export class ScheduledTaskExecutor {
 
     await this.deps.queue.enqueue(`scheduled ${task.id}`, async () => {
       try {
-        const started = await this.deps.opencode.startGmailRun(request, runtimeCallbacks);
+        const started = await this.deps.orchestrator.startRun(
+          request,
+          runtimeCallbacks,
+        );
         if (!started.started || started.status !== "running") {
           lease.release();
         }
@@ -73,9 +76,8 @@ export class ScheduledTaskExecutor {
     fireTime: string,
   ): GmailRunRequest {
     const senderEmail =
-      this.deps.config.userEmail ||
-      this.deps.config.agentInboxEmail ||
-      this.deps.config.gmailTo ||
+      this.deps.config.channels.gmail?.userEmail ||
+      this.deps.config.channels.gmail?.inboxEmail ||
       "scheduler@localhost";
     return {
       threadId: `scheduled-task:${task.id}:${fireTime}`,

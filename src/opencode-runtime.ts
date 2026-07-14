@@ -200,11 +200,15 @@ export class OpencodeRuntime {
   async startRun(
     request: GmailRunRequest,
     callbacks: RuntimeCallbacks,
-  ): Promise<{ started: boolean; status: ThreadRunStatus }> {
+  ): Promise<{ started: boolean; status: ThreadRunStatus; sessionId?: string }> {
     const existing = this.activeRuns.get(request.threadId) || this.restoreActiveRun(request.threadId, callbacks);
     if (existing && isActiveStatus(existing.status)) {
       existing.callbacks = callbacks;
-      return { started: false, status: existing.status };
+      return {
+        started: false,
+        status: existing.status,
+        sessionId: existing.sessionId,
+      };
     }
 
     const startedAtMs = Date.now();
@@ -250,7 +254,7 @@ export class OpencodeRuntime {
     // background so one slow Gmail thread does not block unrelated threads.
     void this.launchPrompt(run, promptText, fileParts);
 
-    return { started: true, status: "running" };
+    return { started: true, status: "running", sessionId };
   }
 
   private async launchPrompt(
@@ -393,7 +397,7 @@ export class OpencodeRuntime {
       lastDiagnosticAtMs: 0,
       recoveryAttempts: 0,
       lastMessageSyncAtMs: 0,
-      currentModel: this.config.opencodeModel,
+      currentModel: this.config.providers.opencode?.model,
     };
 
     this.activeRuns.set(meta.threadId, run);
@@ -691,7 +695,7 @@ export class OpencodeRuntime {
         sessionStatus === "retry" &&
         sessionRetryAttempt >= 1 &&
         !run.usedFallbackModel &&
-        this.config.opencodeModelFallback
+        this.config.providers.opencode?.fallbackModel
       ) {
         await this.switchToFallbackModel(run);
         continue;
@@ -1077,7 +1081,7 @@ export class OpencodeRuntime {
       await this.sessionManager.invalidateSession(run.sessionKey);
     }
 
-    const fallback = this.config.opencodeModelFallback;
+    const fallback = this.config.providers.opencode?.fallbackModel;
     if (
       isRateLimit(error) &&
       fallback &&
@@ -1085,7 +1089,8 @@ export class OpencodeRuntime {
     ) {
       run.usedFallbackModel = true;
       run.currentModel = fallback;
-      const primary = formatConfiguredModel(this.config.opencodeModel) ?? "default";
+      const primary =
+        formatConfiguredModel(this.config.providers.opencode?.model) ?? "default";
       const fallbackStr = formatConfiguredModel(fallback)!;
       console.warn(
         `[opencode-runtime] rate-limited on ${primary}, switching to fallback ${fallbackStr} thread=${run.threadId}`,
@@ -1102,10 +1107,11 @@ export class OpencodeRuntime {
   }
 
   private async switchToFallbackModel(run: ActiveRun): Promise<void> {
-    const fallback = this.config.opencodeModelFallback!;
+    const fallback = this.config.providers.opencode?.fallbackModel!;
     run.usedFallbackModel = true;
     run.currentModel = fallback;
-    const primary = formatConfiguredModel(this.config.opencodeModel) ?? "default";
+    const primary =
+      formatConfiguredModel(this.config.providers.opencode?.model) ?? "default";
     const fallbackStr = formatConfiguredModel(fallback)!;
     console.warn(
       `[opencode-runtime] session retry attempt >= 1 on ${primary}, aborting and switching to fallback ${fallbackStr} thread=${run.threadId}`,
