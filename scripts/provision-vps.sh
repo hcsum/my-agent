@@ -71,7 +71,7 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 # 4. Standardized credential/state dirs (project-relative, never ~) ----------
 log "creating .secrets/ credential dirs"
 install -d -o "$APP_USER" -g "$APP_USER" -m 700 "$APP_DIR/.secrets"
-for d in gmail-mcp opencode-share; do
+for d in opencode-share; do
   install -d -o "$APP_USER" -g "$APP_USER" -m 700 "$APP_DIR/.secrets/$d"
 done
 
@@ -95,16 +95,14 @@ cat <<EOF
        - NOTES_REPO_URL + NOTES_REPO_TOKEN (fine-grained PAT, Contents R/W)
        - BROWSERBASE_* / CAPSOLVER_API_KEY (if used)
        - USER_EMAIL / AGENT_INBOX_EMAIL
-  2. Gmail OAuth (one-time, interactive): produce gcp-oauth.keys.json +
-     credentials.json and place them in $APP_DIR/.secrets/gmail-mcp/
-     (owned by $APP_USER). See docs/DEPLOY.md.
-  3. OpenCode model auth (one-time): run \`opencode auth login\` so
+       - EMAIL_PASSWORD / IMAP_HOST / SMTP_HOST
+  2. OpenCode model auth (one-time): run \`opencode auth login\` so
      credentials land in $APP_DIR/.secrets/opencode-share/.
-  4. GitHub Actions secrets on the repo:
+  3. GitHub Actions secrets on the repo:
        DEPLOY_HOST, DEPLOY_USER=$APP_USER, DEPLOY_PORT, DEPLOY_PATH=$APP_DIR,
        DEPLOY_SSH_KEY (private key whose public half is in
        $APP_USER's ~/.ssh/authorized_keys)
-  5. First deploy: push to main (GitHub Action) OR, as $APP_USER, run
+  4. First deploy: push to main (GitHub Action) OR, as $APP_USER, run
        cd $APP_DIR && docker compose up -d --build
 
   IMPORTANT: always run docker compose as $APP_USER, never as root.

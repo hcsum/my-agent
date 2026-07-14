@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import type {
   AppConfig,
   ClaudePermissionMode,
+  ImapSmtpChannelConfig,
   OpenCodeModelRef,
   ProviderName,
 } from "./types.js";
@@ -51,6 +52,48 @@ function parseClaudePermissionMode(raw?: string): ClaudePermissionMode | undefin
   );
 }
 
+function parseImapConfig(
+  inboxEmail: string | undefined,
+): ImapSmtpChannelConfig {
+  const user = process.env.EMAIL_USER?.trim() || inboxEmail;
+  const password = process.env.EMAIL_PASSWORD?.trim();
+  const imapHost = process.env.IMAP_HOST?.trim();
+  const smtpHost = process.env.SMTP_HOST?.trim();
+
+  if (!user) {
+    throw new Error("Email bridge requires EMAIL_USER (or AGENT_INBOX_EMAIL)");
+  }
+  if (!password) {
+    throw new Error("Email bridge requires EMAIL_PASSWORD");
+  }
+  if (!imapHost) {
+    throw new Error("Email bridge requires IMAP_HOST");
+  }
+  if (!smtpHost) {
+    throw new Error("Email bridge requires SMTP_HOST");
+  }
+
+  const imapPort = Number(process.env.IMAP_PORT) || 993;
+  const smtpPort = Number(process.env.SMTP_PORT) || 465;
+
+  return {
+    user,
+    password,
+    imapHost,
+    imapPort,
+    smtpHost,
+    smtpPort,
+    imapSecure: parseBool(process.env.IMAP_SECURE, imapPort === 993),
+    smtpSecure: parseBool(process.env.SMTP_SECURE, smtpPort === 465),
+  };
+}
+
+function parseBool(raw: string | undefined, fallback: boolean): boolean {
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === "") return fallback;
+  return value === "true" || value === "1" || value === "yes";
+}
+
 export function loadConfig(): AppConfig {
   const provider = parseProvider(
     process.env.PROVIDER || process.env.AGENT_PROVIDER,
@@ -64,6 +107,7 @@ export function loadConfig(): AppConfig {
     process.env.USER_EMAIL?.trim() ||
     process.env.SCHEDULED_RESULTS_TO?.trim() ||
     undefined;
+  const imap = gmailInboxEmail ? parseImapConfig(gmailInboxEmail) : undefined;
 
   if (provider === "opencode" && !opencodeBaseUrl) {
     throw new Error("Missing required environment variable: OPENCODE_BASE_URL");
@@ -103,6 +147,7 @@ export function loadConfig(): AppConfig {
           process.env.SCHEDULED_RESULTS_TO?.trim() || undefined,
         pollIntervalMs: Number(process.env.GMAIL_POLL_INTERVAL_MS) || 10000,
         newerThan: process.env.GMAIL_NEWER_THAN?.trim() || "3d",
+        imap,
       },
     },
     stateFile:

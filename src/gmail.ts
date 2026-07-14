@@ -1,12 +1,3 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
-import type { OAuth2Client } from "google-auth-library";
-import { google } from "googleapis";
-import type { gmail_v1 } from "googleapis";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
-
 import {
   clearPendingPermission,
   clearPendingQuestion,
@@ -39,13 +30,14 @@ import {
 } from "./public-activity.js";
 import type {
   PermissionResponse,
-  RunImageInput,
   RuntimeCallbacks,
 } from "./opencode-runtime.js";
 import { SerialQueue } from "./queue.js";
 import type { ScheduledResultPayload } from "./scheduler/types.js";
 import type { AppConfig } from "./types.js";
 import { WorkflowRunner } from "./workflow.js";
+import { MailTransportUnavailableError } from "./mail/transport.js";
+import type { MailTransport } from "./mail/transport.js";
 
 interface ThreadMeta {
   gmailThreadId: string;
@@ -55,15 +47,8 @@ interface ThreadMeta {
   messageId: string;
 }
 
-// Caps on inline images lifted from an inbound email, to keep the prompt from
-// blowing past model limits on image-heavy mail (signatures, tracking pixels,
-// photo attachments).
-const MAX_INBOUND_IMAGES = 5;
-const MAX_INBOUND_IMAGE_BYTES = 10 * 1024 * 1024;
-
 export class GmailBridge {
-  private oauth2Client: OAuth2Client | null = null;
-  private gmail: gmail_v1.Gmail | null = null;
+  private connected = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly threadMeta = new Map<string, ThreadMeta>();
   private readonly publicTasks = new Map<string, PublicTaskContext>();
@@ -82,65 +67,25 @@ export class GmailBridge {
     private readonly queue: SerialQueue,
     private readonly publicActivity: PublicEventPublisher,
     private readonly executionSlot: ExecutionSlot,
+    private readonly transport: MailTransport,
   ) {
     this.workflow = new WorkflowRunner(orchestrator, queue, publicActivity);
   }
 
   async launch(): Promise<void> {
-    this.setupProxy();
-
-    const credDir =
-      process.env.GMAIL_MCP_DIR?.trim() || path.join(os.homedir(), ".gmail-mcp");
-    const keysPath = path.join(credDir, "gcp-oauth.keys.json");
-    const tokensPath = path.join(credDir, "credentials.json");
-
-    if (!fs.existsSync(keysPath) || !fs.existsSync(tokensPath)) {
-      console.warn(`[gmail] skipping — missing credentials in ${credDir}/`);
-      return;
-    }
-
-    const keys = JSON.parse(fs.readFileSync(keysPath, "utf8"));
-    const installed = keys.installed || keys.web;
-    if (!installed) {
-      console.warn("[gmail] skipping — invalid OAuth keys file");
-      return;
-    }
-
-    const tokens = JSON.parse(fs.readFileSync(tokensPath, "utf8"));
-
-    this.oauth2Client = new google.auth.OAuth2(
-      installed.client_id,
-      installed.client_secret,
-      installed.redirect_uris?.[0] || "http://localhost",
-    );
-
-    this.oauth2Client.setCredentials(tokens);
-
-    this.oauth2Client.on("tokens", (newTokens) => {
-      const updated = {
-        ...tokens,
-        ...newTokens,
-      };
-      fs.writeFileSync(tokensPath, JSON.stringify(updated, null, 2), "utf8");
-      console.log("[gmail] refreshed OAuth tokens");
-    });
-
-    this.gmail = google.gmail({ version: "v1", auth: this.oauth2Client });
-
-    let profile;
+    let address: string;
     try {
-      profile = await this.gmail.users.getProfile({ userId: "me" });
+      ({ address } = await this.transport.connect());
     } catch (error) {
-      if (isRevokedRefreshTokenError(error)) {
-        console.error(
-          "[gmail] OAuth refresh token expired or revoked. Run `npx tsx scripts/gmail-reauth.ts` to reconnect Gmail.",
-        );
+      if (error instanceof MailTransportUnavailableError) {
+        console.warn(`[gmail] skipping — ${error.message}`);
         return;
       }
       throw error;
     }
 
-    this.userEmail = profile.data.emailAddress || "";
+    this.connected = true;
+    this.userEmail = address;
     console.log(`[gmail] connected as ${this.userEmail}`);
 
     await this.resumeActiveRuns();
@@ -186,8 +131,8 @@ export class GmailBridge {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
-    this.gmail = null;
-    this.oauth2Client = null;
+    this.connected = false;
+    await this.transport.close();
     console.log("[gmail] stopped");
   }
 
@@ -207,13 +152,13 @@ export class GmailBridge {
       this.pollForMessages()
         .catch((err) => console.error("[gmail] poll error", err))
         .finally(() => {
-          if (this.gmail && !this.shuttingDown) this.schedulePoll();
+          if (this.connected && !this.shuttingDown) this.schedulePoll();
         });
     }, backoffMs);
   }
 
   private async pollForMessages(): Promise<void> {
-    if (!this.gmail || this.shuttingDown) return;
+    if (!this.connected || this.shuttingDown) return;
 
     const inbox = this.getAgentInboxAddress();
     if (!inbox) {
@@ -221,30 +166,20 @@ export class GmailBridge {
       return;
     }
 
-    const filters = [
-      `to:${inbox}`,
-      `newer_than:${this.config.channels.gmail?.newerThan || "3d"}`,
-    ];
-    const query = filters.join(" ");
-    console.log(`[gmail] polling: ${query}`);
-    const res = await this.gmail.users.messages.list({
-      userId: "me",
-      q: query,
-      maxResults: 10,
-    });
-
-    const messages = res.data.messages || [];
+    const messageIds = await this.transport.listInboxMessageIds(
+      inbox,
+      this.config.channels.gmail?.newerThan || "3d",
+    );
 
     let newCount = 0;
-    for (const msg of messages) {
-      if (!msg.id || isProcessed(msg.id)) continue;
-      const messageId = msg.id;
-      if (!tryClaimMessage(msg.id)) {
-        console.log(`[gmail] skipped claimed message ${msg.id}`);
+    for (const messageId of messageIds) {
+      if (isProcessed(messageId)) continue;
+      if (!tryClaimMessage(messageId)) {
+        console.log(`[gmail] skipped claimed message ${messageId}`);
         continue;
       }
       newCount++;
-      console.log(`[gmail] processing new message ${msg.id}`);
+      console.log(`[gmail] processing new message ${messageId}`);
       this.trackInFlight(
         this.processMessage(messageId).catch((err) => {
           releaseClaim(messageId);
@@ -254,54 +189,43 @@ export class GmailBridge {
     }
 
     console.log(
-      `[gmail] poll result: ${messages.length} total, ${newCount} new`,
+      `[gmail] poll result: ${messageIds.length} total, ${newCount} new`,
     );
     this.consecutiveErrors = 0;
   }
 
   private async processMessage(messageId: string): Promise<void> {
-    if (!this.gmail) return;
+    if (!this.connected) return;
     const stopClaimHeartbeat = this.startClaimHeartbeat(messageId);
     let threadId = messageId;
     let gmailThreadId = messageId;
     let subject = "(no subject)";
     let senderEmail = "";
+    let senderName = "";
     let publicTask: PublicTaskContext | undefined;
 
     try {
       const startedAt = Date.now();
-      const res = await this.gmail.users.messages.get({
-        userId: "me",
-        id: messageId,
-        format: "full",
-      });
+      const message = await this.transport.fetchMessage(messageId);
       console.log(`[gmail] fetched ${messageId} in ${Date.now() - startedAt}ms`);
 
-      const message = res.data;
-      const headers = message.payload?.headers || [];
+      if (!message) {
+        console.warn(`[gmail] message ${messageId} not found; marking processed`);
+        markProcessed(messageId, threadId, subject, senderEmail);
+        return;
+      }
+
       gmailThreadId = message.threadId || messageId;
       const threadLink = getThreadSessionLink(gmailThreadId);
       threadId = threadLink?.canonicalThreadId || gmailThreadId;
 
-      const fromHeader =
-        headers.find((h) => h.name?.toLowerCase() === "from")?.value || "";
-      const toHeader =
-        headers.find((h) => h.name?.toLowerCase() === "to")?.value || "";
-      const deliveredToHeader =
-        headers.find((h) => h.name?.toLowerCase() === "delivered-to")?.value || "";
-      const originalToHeader =
-        headers.find((h) => h.name?.toLowerCase() === "x-original-to")?.value || "";
-      subject =
-        headers.find((h) => h.name?.toLowerCase() === "subject")?.value ||
-        "(no subject)";
-      const rfcMessageId =
-        headers.find((h) => h.name?.toLowerCase() === "message-id")?.value ||
-        "";
-
-      const { name: senderName, email } = parseFromHeader(fromHeader);
-      senderEmail = email;
-      const body = this.extractTextBody(message.payload) || "";
-      const internalDateMs = parseMessageInternalDate(message.internalDate);
+      subject = message.subject;
+      const rfcMessageId = message.rfcMessageId;
+      senderName = message.fromName;
+      senderEmail = message.fromEmail;
+      const body = message.textBody;
+      const internalDateMs = message.internalDateMs;
+      const timestamp = new Date(internalDateMs || Date.now());
       const inboxAddress = this.getAgentInboxAddress();
 
       if (
@@ -311,25 +235,22 @@ export class GmailBridge {
         )
       ) {
         console.log(
-          `[gmail] skipping stale message ${messageId}; internalDate=${message.internalDate || "(missing)"} older than ${this.config.channels.gmail?.newerThan || "3d"}`,
+          `[gmail] skipping stale message ${messageId}; internalDate=${internalDateMs || "(missing)"} older than ${this.config.channels.gmail?.newerThan || "3d"}`,
         );
         await this.markRead(messageId);
         markProcessed(messageId, threadId, subject, senderEmail);
         return;
       }
 
-      // Gmail thread search can surface the bridge's own sent replies when the
+      // Thread search can surface the bridge's own sent replies when the
       // authenticated account is also the human user's mailbox. Only continue
       // if the fetched message was actually addressed to the agent inbox.
       if (
         inboxAddress &&
-        !messageTargetsInbox(
-          [toHeader, deliveredToHeader, originalToHeader],
-          inboxAddress,
-        )
+        !messageTargetsInbox(message.toAddresses, inboxAddress)
       ) {
         console.log(
-          `[gmail] skipping non-inbox message ${messageId}; to=${toHeader || "(missing)"}`,
+          `[gmail] skipping non-inbox message ${messageId}; to=${message.toAddresses.join(", ") || "(missing)"}`,
         );
         markProcessed(messageId, threadId, subject, senderEmail);
         return;
@@ -413,9 +334,7 @@ export class GmailBridge {
             sourceSession: threadId,
             senderName,
             chatTitle: subject,
-            timestamp: new Date(
-              parseInt(message.internalDate || String(Date.now()), 10),
-            ),
+            timestamp,
             publicTask,
           })
         : await this.startManagedRun(
@@ -424,7 +343,7 @@ export class GmailBridge {
             publicTask,
             async () => {
               const ensuredPublicTask = publicTask as PublicTaskContext;
-              const images = await this.extractImages(messageId, message.payload);
+              const images = await this.transport.fetchImages(messageId);
               const opencodeStartedAt = Date.now();
               const started = await this.orchestrator.startRun(
                 {
@@ -437,9 +356,7 @@ export class GmailBridge {
                   rfcMessageId,
                   textBody,
                   images,
-                  timestamp: new Date(
-                    parseInt(message.internalDate || String(Date.now()), 10),
-                  ),
+                  timestamp,
                   sessionKey,
                   sessionTitle,
                   publicTask: ensuredPublicTask,
@@ -670,7 +587,7 @@ export class GmailBridge {
       summary: payload.summary,
       textBody: payload.body,
     });
-    if (!this.gmail) {
+    if (!this.connected) {
       this.publicActivity.setIdleIfNoActiveRuns();
       return;
     }
@@ -696,26 +613,17 @@ export class GmailBridge {
       `Task: ${payload.summary}  ·  id: ${payload.taskId}`,
     ].join("\n");
 
-    const raw = buildMultipartAlternativeMessage({
-      headers: [
-        `To: ${recipient}`,
-        `From: ${fromAddress}`,
-        ...(replyToAddress ? [`Reply-To: ${replyToAddress}`] : []),
-        `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
-      ],
-      textBody: body,
-      htmlBody: markdownToHtml(body),
-    });
-
-    const encoded = Buffer.from(raw).toString("base64url");
-
     try {
-      const response = await this.gmail.users.messages.send({
-        userId: "me",
-        requestBody: { raw: encoded },
+      const sent = await this.transport.sendMessage({
+        to: recipient,
+        from: fromAddress,
+        replyTo: replyToAddress,
+        subject,
+        text: body,
+        html: markdownToHtml(body),
       });
-      const gmailMessageId = response.data.id || "";
-      const gmailThreadId = response.data.threadId || "";
+      const gmailMessageId = sent.messageId;
+      const gmailThreadId = sent.threadId;
       recordOutboundEmail({
         deliveryKind: "scheduled_result",
         threadId: payload.taskId,
@@ -879,85 +787,8 @@ export class GmailBridge {
     );
   }
 
-  private extractTextBody(
-    payload: gmail_v1.Schema$MessagePart | undefined,
-  ): string {
-    if (!payload) return "";
-
-    if (payload.mimeType === "text/plain" && payload.body?.data) {
-      return Buffer.from(payload.body.data, "base64url").toString("utf8");
-    }
-
-    if (payload.parts?.length) {
-      for (const part of payload.parts) {
-        const text = this.extractTextBody(part);
-        if (text) return text;
-      }
-    }
-
-    return "";
-  }
-
-  // Lift inline images and image attachments out of the message so they can be
-  // handed to the model as file parts. Small inline images carry their bytes in
-  // body.data; larger ones are referenced by attachmentId and fetched here.
-  private async extractImages(
-    messageId: string,
-    payload: gmail_v1.Schema$MessagePart | undefined,
-  ): Promise<RunImageInput[]> {
-    if (!this.gmail || !payload) return [];
-
-    const imageParts = collectImageParts(payload);
-    const images: RunImageInput[] = [];
-
-    for (const part of imageParts) {
-      if (images.length >= MAX_INBOUND_IMAGES) break;
-
-      const mime = part.mimeType || "image/png";
-      let base64Url = part.body?.data || "";
-
-      if (!base64Url && part.body?.attachmentId) {
-        try {
-          const attachment = await this.gmail.users.messages.attachments.get({
-            userId: "me",
-            messageId,
-            id: part.body.attachmentId,
-          });
-          base64Url = attachment.data.data || "";
-        } catch (err) {
-          console.warn(
-            `[gmail] failed to fetch image attachment ${part.body.attachmentId} for ${messageId}`,
-            err,
-          );
-          continue;
-        }
-      }
-
-      if (!base64Url) continue;
-
-      // Gmail returns base64url; data URLs need standard base64. Decode then
-      // re-encode to normalize alphabet and padding in one step.
-      const buffer = Buffer.from(base64Url, "base64url");
-      if (buffer.byteLength === 0 || buffer.byteLength > MAX_INBOUND_IMAGE_BYTES) {
-        continue;
-      }
-
-      images.push({
-        mime,
-        filename: part.filename || `image-${images.length + 1}`,
-        url: `data:${mime};base64,${buffer.toString("base64")}`,
-      });
-    }
-
-    if (images.length > 0) {
-      console.log(`[gmail] extracted ${images.length} inline image(s) from ${messageId}`);
-    }
-
-    return images;
-  }
-
   private async sendReply(threadId: string, text: string): Promise<void> {
-    if (!this.gmail) return;
+    if (!this.connected) return;
 
     const meta = this.threadMeta.get(threadId);
     if (!meta) {
@@ -973,36 +804,18 @@ export class GmailBridge {
       getLatestGmailThreadIdForCanonicalThread(threadId) ||
       threadId;
 
-    const references = meta.messageId
-      ? [
-          `In-Reply-To: ${meta.messageId}`,
-          `References: ${meta.messageId}`,
-        ]
-      : [];
-
-    const raw = buildMultipartAlternativeMessage({
-      headers: [
-        `To: ${meta.senderName} <${meta.senderEmail}>`,
-        `Reply-To: ${this.getAgentInboxAddress() || meta.senderEmail}`,
-        `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
-        ...references,
-      ],
-      textBody: text,
-      htmlBody: markdownToHtml(text),
-    });
-
-    const encoded = Buffer.from(raw).toString("base64url");
-
     try {
-      const response = await this.gmail.users.messages.send({
-        userId: "me",
-        requestBody: {
-          raw: encoded,
-          threadId: gmailThreadId,
-        },
+      const sent = await this.transport.sendMessage({
+        to: `${meta.senderName} <${meta.senderEmail}>`,
+        replyTo: this.getAgentInboxAddress() || meta.senderEmail,
+        subject,
+        inReplyTo: meta.messageId || undefined,
+        references: meta.messageId ? [meta.messageId] : undefined,
+        text,
+        html: markdownToHtml(text),
       });
-      const gmailMessageId = response.data.id || "";
-      const responseThreadId = response.data.threadId || gmailThreadId;
+      const gmailMessageId = sent.messageId;
+      const responseThreadId = sent.threadId || gmailThreadId;
       meta.gmailThreadId = responseThreadId;
       upsertThreadSessionLink({
         gmailThreadId: responseThreadId,
@@ -1046,82 +859,9 @@ export class GmailBridge {
   }
 
   private async markRead(messageId: string): Promise<void> {
-    if (!this.gmail) return;
-
-    try {
-      await this.gmail.users.messages.modify({
-        userId: "me",
-        id: messageId,
-        requestBody: {
-          removeLabelIds: ["UNREAD"],
-        },
-      });
-    } catch (error) {
-      if (isGmailMessageNotFound(error)) {
-        console.warn(`[gmail] markRead skipped missing message ${messageId}`);
-        return;
-      }
-      throw error;
-    }
+    if (!this.connected) return;
+    await this.transport.markRead(messageId);
   }
-
-  private setupProxy(): void {
-    const proxy = process.env.HTTPS_PROXY?.trim() || process.env.https_proxy?.trim();
-
-    if (!proxy) return;
-
-    process.env.HTTPS_PROXY = proxy;
-
-    const agent = new ProxyAgent(proxy);
-    const origFetch = globalThis.fetch;
-
-    globalThis.fetch = (input, init) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (input as Request).url;
-
-      if (url.includes("googleapis.com") || url.includes("google.com")) {
-        return undiciFetch(input as Parameters<typeof undiciFetch>[0], {
-          ...init,
-          dispatcher: agent,
-        } as Parameters<typeof undiciFetch>[1]) as Promise<Response>;
-      }
-
-      return origFetch(input, init);
-    };
-
-    console.log(`[gmail] using proxy ${proxy}`);
-  }
-}
-
-function buildMultipartAlternativeMessage(input: {
-  headers: string[];
-  textBody: string;
-  htmlBody: string;
-}): string {
-  const boundary = `opencode-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return [
-    ...input.headers,
-    "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    "",
-    `--${boundary}`,
-    "Content-Type: text/plain; charset=utf-8",
-    "Content-Transfer-Encoding: 8bit",
-    "",
-    input.textBody,
-    "",
-    `--${boundary}`,
-    "Content-Type: text/html; charset=utf-8",
-    "Content-Transfer-Encoding: 8bit",
-    "",
-    input.htmlBody,
-    "",
-    `--${boundary}--`,
-  ].join("\r\n");
 }
 
 function markdownToHtml(markdown: string): string {
@@ -1274,12 +1014,6 @@ function escapeHtml(input: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function parseMessageInternalDate(raw?: string | null): number | undefined {
-  if (!raw?.trim()) return undefined;
-  const ms = Number(raw);
-  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
-}
-
 function isOlderThanWindow(
   internalDateMs: number | undefined,
   window: string,
@@ -1311,38 +1045,6 @@ function parseGmailNewerThanWindow(raw: string): number | undefined {
 
 function isStandaloneUrl(input: string): boolean {
   return /^https?:\/\/\S+$/i.test(input);
-}
-
-function collectImageParts(
-  payload: gmail_v1.Schema$MessagePart,
-): gmail_v1.Schema$MessagePart[] {
-  const out: gmail_v1.Schema$MessagePart[] = [];
-  const walk = (part: gmail_v1.Schema$MessagePart | undefined): void => {
-    if (!part) return;
-    if (
-      part.mimeType?.startsWith("image/") &&
-      (part.body?.data || part.body?.attachmentId)
-    ) {
-      out.push(part);
-    }
-    part.parts?.forEach(walk);
-  };
-  walk(payload);
-  return out;
-}
-
-function parseFromHeader(from: string): { name: string; email: string } {
-  const match = from.match(/^(.+?)\s*<(.+?)>$/);
-  if (match) {
-    return {
-      name: match[1].trim().replace(/^"|"$/g, ""),
-      email: match[2].trim(),
-    };
-  }
-  if (from.includes("@")) {
-    return { name: from, email: from };
-  }
-  return { name: from, email: from };
 }
 
 function messageTargetsInbox(headers: string[], inboxAddress: string): boolean {
@@ -1382,19 +1084,6 @@ function extractErrorMessage(error: unknown): string {
   return String(error);
 }
 
-function isGmailMessageNotFound(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-
-  const maybeStatus = (error as { status?: unknown }).status;
-  if (maybeStatus === 404) return true;
-
-  const response = (error as { response?: { status?: unknown; data?: unknown } }).response;
-  if (response?.status === 404) return true;
-
-  const data = response?.data;
-  if (!data || typeof data !== "object") return false;
-  return (data as { error?: { status?: unknown } }).error?.status === "NOT_FOUND";
-}
 
 function isReplyHeader(line: string): boolean {
   if (!line) return false;
@@ -1593,17 +1282,4 @@ function buildFailureReply(error: string): string {
     `Error: ${error}`,
     "Reply again in this thread if you want me to retry.",
   ].join("\n");
-}
-
-function isRevokedRefreshTokenError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-
-  const cause = "response" in error ? error.response : undefined;
-  if (!cause || typeof cause !== "object") return false;
-
-  const data = "data" in cause ? cause.data : undefined;
-  if (!data || typeof data !== "object") return false;
-
-  const grantError = "error" in data ? data.error : undefined;
-  return grantError === "invalid_grant";
 }

@@ -28,12 +28,24 @@ export interface ClaudeProviderConfig {
   permissionMode?: ClaudePermissionMode;
 }
 
+export interface ImapSmtpChannelConfig {
+  user: string;
+  password: string;
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
+  imapSecure: boolean;
+  smtpSecure: boolean;
+}
+
 export interface GmailChannelConfig {
   inboxEmail?: string;
   userEmail?: string;
   scheduledResultsTo?: string;
   pollIntervalMs: number;
   newerThan: string;
+  imap?: ImapSmtpChannelConfig;
 }
 
 export interface AppConfig {

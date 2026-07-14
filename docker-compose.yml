@@ -23,13 +23,12 @@ services:
       # The bridge binds the spawned server to this URL's host/port.
       - OPENCODE_BASE_URL=http://127.0.0.1:4096
       # Keep all runtime state under /workspace (never /root): redirect
-      # opencode's XDG dirs and the Gmail cred dir into the repo tree so the
-      # container is self-contained and the mounts below are uniform.
+      # opencode's XDG dirs into the repo tree so the container is
+      # self-contained and the mounts below are uniform.
       - XDG_DATA_HOME=/workspace/.local/share
       - XDG_CONFIG_HOME=/workspace/.config
       - XDG_CACHE_HOME=/workspace/.cache
       - XDG_STATE_HOME=/workspace/.local/state
-      - GMAIL_MCP_DIR=/workspace/.gmail-mcp
       # Per-agent slug for the generated memory audit files; shared notes/ repo
       # means each deployment writes its own SNAPSHOT.<id>.md to avoid conflicts.
       - MEM0_AGENT_ID=vps
@@ -52,15 +51,12 @@ services:
       - ./notes:/workspace/notes
       # Credential/state dirs. Host sources are fixed under the project's
       # .secrets/; container targets are under /workspace (matched by the
-      # XDG_*/GMAIL_MCP_DIR env above) so nothing lives in /root.
-      # - gmail-mcp: Gmail OAuth creds (gcp-oauth.keys.json + credentials.json);
-      #   the container-side GMAIL_MCP_DIR env tells the Gmail code to read here.
+      # XDG_* env above) so nothing lives in /root.
       # - opencode-share: opencode's DATA dir — holds auth.json (incl. the
       #   openai OAuth tokens and other provider API keys). Required.
       # No opencode CONFIG-dir mount: custom providers are injected in code
       # (src/opencode-server-config.ts) and provider auth lives in auth.json
       # above, so the global ~/.config/opencode/opencode.json is not needed.
-      - ./.secrets/gmail-mcp:/workspace/.gmail-mcp
       - ./.secrets/opencode-share:/workspace/.local/share/opencode
     ports:
       - "4096:4096"

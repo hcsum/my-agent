@@ -34,7 +34,7 @@ The whole point of the design is to keep buckets 2 and 3 small and explicit.
 - A VPS (root SSH access for the one-time provisioning).
 - A GitHub repo for the agent code (this repo / a fork).
 - A separate private GitHub repo for `notes`.
-- Accounts/keys for any integrations you use (Gmail, Browserbase, etc.).
+- Accounts/keys for any integrations you use (email mailbox, Browserbase, etc.).
 
 ## Step 1 — Provision the VPS (one-time, as root)
 
@@ -49,7 +49,7 @@ This is idempotent and:
 - creates the `deploy` user and adds it to the `docker` group,
 - installs Docker + the compose plugin,
 - clones the repo to `/opt/opencode-agent` (owned by `deploy`),
-- creates `.secrets/{gmail-mcp,opencode-share}` (mode 700),
+- creates `.secrets/opencode-share` (mode 700),
 - scaffolds `.env` from `.env.example`,
 - prints the remaining manual steps.
 
@@ -62,6 +62,7 @@ Edit `/opt/opencode-agent/.env` (as `deploy`). Required / common keys:
 | `NOTES_REPO_URL` | `https://github.com/<you>/<notes-repo>.git` |
 | `NOTES_REPO_TOKEN` | GitHub **fine-grained PAT**, scoped to the notes repo, **Contents: Read and write**. Enables the container to push notes over HTTPS — no SSH key needed. |
 | `USER_EMAIL` / `AGENT_INBOX_EMAIL` | result recipient / polled inbox |
+| `EMAIL_PASSWORD`, `IMAP_HOST`, `SMTP_HOST` | required for the email bridge |
 | `BROWSERBASE_*`, `CAPSOLVER_API_KEY` | web-access providers (if used) |
 | `OPENCODE_MODEL` | model id (or set in compose `environment`) |
 | `APT_MIRROR` | **optional** build knob: Debian apt mirror used during image build. Defaults to the upstream CDN; set a domestic mirror (e.g. `mirrors.tuna.tsinghua.edu.cn`) when building behind a slow cross-border link. Wired into the build via `docker-compose.yml` `build.args`. |
@@ -76,24 +77,34 @@ hardcoded in `docker-compose.yml`). The global `~/.config/opencode` is not
 mounted — custom providers are injected in code and provider auth lives in the
 share dir's `auth.json`.
 
-## Step 3 — One-time interactive auth (cannot be scripted)
+## Step 3 — Email auth
 
-**Gmail OAuth** (only if using the email bridge):
+**IMAP + SMTP**
 
-1. Create a Google Cloud OAuth client; download `gcp-oauth.keys.json`.
-2. Run `scripts/gmail-reauth.ts` locally, complete the Google consent for the
-   inbox account, producing `credentials.json`.
-3. Place both files in `/opt/opencode-agent/.secrets/gmail-mcp/` owned by
-   `deploy` (`install -o deploy -g deploy -m 600 ...`).
-4. To avoid 7-day refresh-token expiry, publish the OAuth app to **In
-   production** (not "Testing").
-5. **Verify the account.** After the container starts, confirm the log line
-   `[gmail] connected as <X>` shows the *same* Google account whose alias you
-   set in `AGENT_INBOX_EMAIL` (the poll query is `to:<AGENT_INBOX_EMAIL>`). The
-   consent screen silently defaults to whatever account the browser is signed
-   into — consenting as the wrong account makes the bridge poll an empty mailbox
-   and never receive anything. Re-run the reauth (use "Use another account" /
-   an incognito window) if it mismatches.
+This is the low-friction path: one dedicated mailbox plus an app password. No
+Google Cloud project, no OAuth client, no refresh-token expiry.
+
+1. In `/opt/opencode-agent/.env`, set:
+
+   ```bash
+   AGENT_INBOX_EMAIL=myagent-andy@gmail.com
+   USER_EMAIL=you@example.com
+   EMAIL_PASSWORD=<mailbox app password>
+   IMAP_HOST=imap.gmail.com
+   SMTP_HOST=smtp.gmail.com
+   ```
+
+2. Optional knobs:
+   - `EMAIL_USER` only if the login differs from `AGENT_INBOX_EMAIL`.
+   - `IMAP_PORT` / `SMTP_PORT` if your provider does not use `993` / `465`.
+   - `IMAP_SECURE` / `SMTP_SECURE` if you need STARTTLS or plaintext on a
+     trusted network.
+3. Restart the container and verify the logs show `[gmail] connected as <inbox>`.
+
+Common providers expose the same shape: IMAP for receive, SMTP for send, app
+password for auth. Gmail works with the mailbox address directly; if you use a
+`+alias` inbox, `AGENT_INBOX_EMAIL` can stay on the alias while the login stays
+the base mailbox (or you can set `EMAIL_USER` explicitly).
 
 **OpenCode model auth:**
 
@@ -140,7 +151,7 @@ sudo -iu deploy bash -c 'cd /opt/opencode-agent && docker compose ps'
 #   [opencode-serve] listening on http://127.0.0.1:4096
 #   [opencode] connected; visibleSessions=...
 #   [scheduler] recovered N task(s)
-#   [gmail] connected as <inbox>           (if Gmail enabled)
+#   [gmail] connected as <inbox>           (if email bridge enabled)
 docker compose -f /opt/opencode-agent/docker-compose.yml logs --tail 30 agent
 # notes auth wired correctly:
 #   container env has NOTES_REPO_TOKEN, notes remote is https://...
@@ -179,10 +190,31 @@ healthy deploy still shows the `notes` remote as `https://...` with the token.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `[gmail] skipping — missing credentials` | compose run as root, or creds missing | recreate as `deploy`; confirm files in `.secrets/gmail-mcp/` |
+| `Email bridge requires ...` on boot | incomplete IMAP env | set `EMAIL_PASSWORD`, `IMAP_HOST`, `SMTP_HOST` (and `EMAIL_USER` if needed), then restart |
+| SMTP/IMAP auth failure | wrong mailbox password or using the normal login password | create/use a mailbox app password; verify host/port/TLS with the provider |
+| `[gmail] skipping — missing credentials` | compose run as root, or IMAP env incomplete | recreate as `deploy`; confirm `.env` has the IMAP/SMTP settings |
 | notes `pull --rebase` conflict during deploy | notes diverged (commits piled up locally) | resolve in `notes/`, push; ensure container can push (token set) |
 | `Could not resolve hostname github.com-...` | SSH host alias only in one user's home | switch notes to HTTPS token (`NOTES_REPO_TOKEN`) |
-| no morning report AND no email task replies | Gmail OAuth `invalid_grant` | re-auth, copy `credentials.json`, restart; publish OAuth app |
+
+## Maintenance: clear old email test state
+
+After switching a mailbox setup or testing against a real inbox, the bridge may
+pick up a large backlog from the inbox. If you also interrupted runs mid-flight, stale
+`message_claims` rows can cause repeated skip logs until the 15-minute claim TTL
+expires.
+
+Recommended reset sequence:
+
+1. Stop the bridge/container.
+2. Archive old test mail out of the agent inbox. If old mail stays in INBOX and
+   you clear `processed_messages`, the bridge will reprocess and may re-reply.
+3. Clear only transient runtime state:
+
+   ```bash
+   ./scripts/clear-email-bridge-runtime-state.sh .data/gmail.db
+   ```
+
+This preserves `scheduled_tasks` and `scheduled_report_history`.
 
 Deeper operational detail lives in the maintainer runbook (Gmail recovery,
 account specifics). This document covers standing up and verifying a deployment.

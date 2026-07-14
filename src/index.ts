@@ -10,6 +10,7 @@ import { PublicEventPublisher } from "./public-activity.js";
 import { PublicActivityReplicator } from "./public-activity-sync.js";
 import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
+import { createMailTransport } from "./mail/factory.js";
 import { initDatabase } from "./db.js";
 import { getRuntimeLogPath, setupFileLogging } from "./logger.js";
 import { GmailScheduledResultSink } from "./scheduler/gmail-result-sink.js";
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
       queue,
       publicActivity,
       executionSlot,
+      createMailTransport(config.channels.gmail),
     );
     launches.push(
       bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),
