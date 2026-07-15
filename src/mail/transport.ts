@@ -16,6 +16,8 @@ export interface InboundMessage {
   threadId: string;
   // RFC Message-ID header value, kept verbatim (with angle brackets).
   rfcMessageId: string;
+  // RFC References chain from the inbound message, oldest to newest.
+  references: string[];
   fromName: string;
   fromEmail: string;
   // Raw To / Delivered-To / X-Original-To values, used to confirm the message

@@ -153,11 +153,14 @@ export class ImapSmtpTransport implements MailTransport {
 
     const fromHeader = parsed.from?.text || "";
     const { name: fromName, email: fromEmail } = parseFromHeader(fromHeader);
+    const rfcMessageId = normalizeMessageId(parsed.messageId || id) || id;
+    const references = normalizeReferences(parsed.references);
 
     return {
       id,
       threadId: deriveThreadId(parsed, id),
-      rfcMessageId: parsed.messageId || id,
+      rfcMessageId,
+      references,
       fromName,
       fromEmail,
       toAddresses: collectRecipientHeaders(parsed),
@@ -301,8 +304,9 @@ export class ImapSmtpTransport implements MailTransport {
 function deriveThreadId(parsed: ParsedMail, fallbackId: string): string {
   const references = normalizeReferences(parsed.references);
   if (references.length > 0) return references[0];
-  if (parsed.inReplyTo) return parsed.inReplyTo.trim();
-  return parsed.messageId || fallbackId;
+  const inReplyTo = normalizeMessageId(parsed.inReplyTo);
+  if (inReplyTo) return inReplyTo;
+  return normalizeMessageId(parsed.messageId || fallbackId) || fallbackId;
 }
 
 function normalizeReferences(
@@ -310,7 +314,17 @@ function normalizeReferences(
 ): string[] {
   if (!references) return [];
   const list = Array.isArray(references) ? references : references.split(/\s+/);
-  return list.map((r) => r.trim()).filter(Boolean);
+  return list
+    .map(normalizeMessageId)
+    .filter((value): value is string => Boolean(value));
+}
+
+function normalizeMessageId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (/^<[^<>@\s]+@[^<>@\s]+>$/.test(trimmed)) return trimmed;
+  if (/^[^<>@\s]+@[^<>@\s]+$/.test(trimmed)) return `<${trimmed}>`;
+  return trimmed;
 }
 
 function collectRecipientHeaders(parsed: ParsedMail): string[] {

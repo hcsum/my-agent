@@ -53,7 +53,9 @@ interface ThreadMeta {
   senderName: string;
   subject: string;
   messageId: string;
+  referenceChain: string[];
   lastUserText: string;
+  lastUserDate?: Date;
 }
 
 export type FileDeliveryResult =
@@ -386,7 +388,9 @@ export class GmailBridge {
         senderName,
         subject,
         messageId: rfcMessageId,
+        referenceChain: buildInboundReferenceChain(message.references, rfcMessageId),
         lastUserText: textBody,
+        lastUserDate: timestamp,
       });
 
       const workflowCommand = this.workflow.parse(textBody);
@@ -665,6 +669,7 @@ export class GmailBridge {
         senderName: run.senderName,
         subject: run.subject,
         messageId: run.rfcMessageId,
+        referenceChain: buildInboundReferenceChain([], run.rfcMessageId),
         lastUserText: run.lastUserText,
       });
       this.publicTasks.set(
@@ -827,6 +832,12 @@ export class GmailBridge {
     return this.getUserAddress() || this.getAgentInboxAddress();
   }
 
+  private formatAgentFromAddress(): string | undefined {
+    const address = this.getAgentInboxAddress() || this.userEmail;
+    if (!address) return undefined;
+    return `Andy <${address}>`;
+  }
+
   private isAuthorizedSender(senderEmail: string): boolean {
     const normalizedSender = senderEmail.trim().toLowerCase();
     const normalizedUser = this.getUserAddress()?.trim().toLowerCase();
@@ -937,8 +948,8 @@ export class GmailBridge {
 
     const subject = meta.subject.startsWith("Re:")
       ? meta.subject
-      : `Re: ${meta.subject}`;
-    const references = buildReplyReferences(threadId, meta.messageId);
+      : buildReplySubject(meta.subject);
+    const references = buildReplyReferences(meta);
     const gmailThreadId =
       meta.gmailThreadId ||
       getLatestGmailThreadIdForCanonicalThread(threadId) ||
@@ -953,19 +964,20 @@ export class GmailBridge {
         ? undefined
         : this.pendingAttachments.get(threadId);
     const attachments = staged && staged.length > 0 ? staged : undefined;
-    const body = options?.includeOriginalContext
-      ? appendOriginalContext(text, meta)
-      : text;
+    const textBody = buildReplyText(text, meta);
+    const htmlBody = addGmailQuote(markdownToHtml(text), meta);
+    const fromAddress = this.formatAgentFromAddress();
 
     try {
       const sent = await this.transport.sendMessage({
         to: `${meta.senderName} <${meta.senderEmail}>`,
+        from: fromAddress,
         replyTo: this.getAgentInboxAddress() || meta.senderEmail,
         subject,
         inReplyTo: meta.messageId || undefined,
         references,
-        text: body,
-        html: markdownToHtml(body),
+        text: textBody,
+        html: htmlBody,
         attachments,
       });
       if (attachments) {
@@ -1288,6 +1300,14 @@ function normalizeSessionTitleFragment(value: string): string {
   return normalized.slice(0, 72);
 }
 
+function buildReplySubject(subject: string): string {
+  const normalized = subject.trim();
+  if (!normalized || normalized.toLowerCase() === "(no subject)") {
+    return "Re:";
+  }
+  return `Re: ${normalized}`;
+}
+
 function parsePermissionResponse(text: string): PermissionResponse | undefined {
   const normalizedLines = text
     .split(/\r?\n/)
@@ -1331,17 +1351,31 @@ function normalizePermissionResponseLine(line: string): string {
     .replace(/[.!?。！？,，:：]+$/g, "");
 }
 
-function buildReplyReferences(threadId: string, messageId: string): string[] | undefined {
-  const references = [threadId, messageId].filter(isRfcMessageIdLike);
+function buildInboundReferenceChain(
+  references: string[] | undefined,
+  messageId: string,
+): string[] {
+  const chain = [...(references || []), messageId]
+    .map(normalizeRfcMessageId)
+    .filter((value): value is string => Boolean(value));
+  return Array.from(new Set(chain));
+}
+
+function buildReplyReferences(meta: ThreadMeta): string[] | undefined {
+  const references = buildInboundReferenceChain(meta.referenceChain, meta.messageId);
   if (references.length === 0) return undefined;
-  return Array.from(new Set(references));
+  return references;
 }
 
-function isRfcMessageIdLike(value: string): boolean {
-  return /^<[^<>@\s]+@[^<>@\s]+>$/.test(value.trim());
+function normalizeRfcMessageId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (/^<[^<>@\s]+@[^<>@\s]+>$/.test(trimmed)) return trimmed;
+  if (/^[^<>@\s]+@[^<>@\s]+$/.test(trimmed)) return `<${trimmed}>`;
+  return undefined;
 }
 
-function appendOriginalContext(text: string, meta: ThreadMeta): string {
+function buildReplyText(text: string, meta: ThreadMeta): string {
   const original = meta.lastUserText.trim();
   if (!original) return text;
 
@@ -1353,12 +1387,54 @@ function appendOriginalContext(text: string, meta: ThreadMeta): string {
   return [
     text.trimEnd(),
     "",
-    "---",
-    "",
-    "Original message:",
-    "",
+    formatGmailQuoteHeader(meta),
     quoted,
   ].join("\n");
+}
+
+function addGmailQuote(html: string, meta: ThreadMeta): string {
+  const original = meta.lastUserText.trim();
+  if (!original) return html;
+
+  const quoteHtml = [
+    "<div class=\"gmail_quote\">",
+    `<div dir=\"ltr\" class=\"gmail_attr\">${escapeHtml(formatGmailQuoteHeader(meta))}<br></div>`,
+    "<blockquote class=\"gmail_quote\" style=\"margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex;\">",
+    textToHtmlLines(original),
+    "</blockquote>",
+    "</div>",
+  ].join("\n");
+
+  return html.replace("</body>", `${quoteHtml}\n</body>`);
+}
+
+function formatGmailQuoteHeader(meta: ThreadMeta): string {
+  const sender = meta.senderName
+    ? `${meta.senderName} <${meta.senderEmail}>`
+    : meta.senderEmail;
+  const date = formatGmailQuoteDate(meta.lastUserDate);
+  return `On ${date}, ${sender} wrote:`;
+}
+
+function formatGmailQuoteDate(date: Date | undefined): string {
+  const value = date || new Date();
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Shanghai",
+  }).format(value);
+}
+
+function textToHtmlLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => (line ? renderInlineMarkdown(line) : "<br>"))
+    .join("<br>\n");
 }
 
 function buildPermissionPrompt(
