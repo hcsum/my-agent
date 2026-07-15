@@ -1,33 +1,41 @@
 # My Agent
 
-## What's in here
+My personal AI agent setup: custom skills, long-term memory, and email/Telegram bridges, running on OpenCode or Claude.
 
-- **Skills** — a set of custom skills under `.opencode/skills/` that encode my workflows (see below)
-- **Gmail bridge** — an Opencode SDK integration that lets me send instructions by email and receive results back; the bridge also handles scheduled tasks
-- **Memory** — long-term memory via [mem0](https://github.com/mem0ai/mem0), plus `notes/` (see below)
-- **Notes** — a _separate_ private git repo, checked out into `notes/`, that the agent and I maintain together. It holds my personal data, the agent's memory layers, research results, todos, and the LLM wiki. It's deliberately kept out of this repo: this repo is code and instructions; `notes/` is the data those instructions operate on. Its internal layout and rules live in `notes/AGENTS.md`.
-- **LLM Wiki** — an accumulating knowledge base the agent reads from and writes to over time
+## What it does
 
-## Why a central repo
+- Supports 2 runtimes: OpenCode and Claude
+- A built-in Gmail bridge
+- A set of skills customized to my needs
+- A Cloudflare Worker endpoint that exposes the agent's live status and activity — see [hcxu.cc/agent](https://hcxu.cc/agent)
+- Assumes a git repo checked out into the `notes/` folder at the root of this repo
 
-Most of my active context lives here, not in the target repos. Research findings, ongoing work, project notes, prior experience — it's all in the `notes/` repo, checked out alongside the skills that know how to read and write it. I've found myself starting almost every new task from this repo first, even when the actual code lives elsewhere, because the context is here and the skills know how to use it.
+## How it fits together
 
-## Some of the skills I find myself using the most
+- **This repo** — code, skills, and instructions
+- **`notes/`** — a *separate* private git repo checked out here, holding my personal data, the agent's memory, research, and todos. Kept separate so this repo stays code, and `notes/` stays the data it operates on.
+- **Bridges** — the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot) let me reach the agent when I'm away from the desk
+- **Status worker** — a Cloudflare Worker publishing live status to [hcxu.cc/agent](https://hcxu.cc/agent)
 
-**`web-access`** — a fork of the original with multi-browser support added. I can tell the agent to use my main browser (so it inherits my login sessions), a dedicated research browser, or a cloud browser (Browserbase). This one is the backbone of most other skills.
+## Quick start
 
-**`morning-report`** — pulls a daily briefing from my favorite news sources and a portfolio check. Runs on a schedule and lands in my inbox.
+```bash
+npm install
+cp .env.example .env         # then fill it in (see below)
+npm run bridge               # start the Gmail bridge
+npm start                    # run the OpenCode server
+```
 
-**`research`** — open-ended topic investigation: the agent plans a search strategy, reads actual pages, and synthesizes a structured report instead of just returning search snippets.
+Key `.env` settings (all documented inline in `.env.example`):
 
-**`grill-me`** — interview mode. I describe a plan and the agent stress-tests it with relentless follow-up questions, walking down every branch of the decision tree and offering a recommended answer for each one.
+- **Gmail bridge** — `AGENT_INBOX_EMAIL`, `USER_EMAIL`, and an app password (`EMAIL_PASSWORD`), not your login password
+- **Notes repo** — `NOTES_REPO_URL` (+ `NOTES_REPO_TOKEN` for HTTPS auth); then run `scripts/bootstrap-notes.sh` to check it out into `notes/`
+- **Long-term memory** — `GOOGLE_API_KEY` (Gemini, for embeddings + extraction) and a running Qdrant at `QDRANT_URL`
 
-**`backlink-prospecting` + `backlink-execution`** — a two-phase SEO backlink pipeline: prospect candidates from competitor exports, triage what's doable, then execute live submissions. Split so I can review targets before anything goes live.
+There's no first-run setup wizard yet — this is manual. For VPS deployment, see `docs/DEPLOY.md` and the `deploy-agent` skill.
 
-**`llm-wiki`** — ingest a URL, file, or directory into a persistent knowledge base. Future sessions can query it. Useful for accumulating domain knowledge that would otherwise get lost between conversations.
+## How I use the agent
 
-**`mentor`** — keeps a running todo list in `notes/todos.md`. I tell it what I'm working on or what just finished, and it keeps the list honest.
+When I'm by the desk, I run `claude` / `codex` / `opencode` in this repo, so I have easy access to the skills and notes.
 
-**`x-home-feed` + `x-search`** — read my X Following feed or search X for a topic, without opening the app.
-
-**`check-keyword` + `use-semrush` + `use-ahrefs` + `serp-inspection`** — a loose SEO toolkit. Each skill wraps a tool or workflow: keyword potential, domain/keyword metrics, SERP weakness analysis.
+When I'm away from the desk, I leave my laptop on and interact with the agent through the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot).
