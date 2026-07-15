@@ -31,9 +31,10 @@ export interface ExecutorCallbacks {
 export class ScheduledTaskExecutor {
   constructor(private readonly deps: ExecutorDeps) {}
 
-  // Dispatch a scheduled task into the OpencodeRuntime via the same serial queue
-  // the inbound Gmail bridge uses. The promise resolves once the prompt has been
-  // dispatched; success/failure flows through the callbacks below.
+  // Dispatch a scheduled task into the OpencodeRuntime via the same queue the
+  // inbound Gmail bridge uses, but only serialize against the same task id so
+  // unrelated work can run concurrently. The promise resolves once the prompt
+  // has been dispatched; success/failure flows through the callbacks below.
   async dispatch(
     task: ScheduledTask,
     fireTime: string,
@@ -54,21 +55,26 @@ export class ScheduledTaskExecutor {
       task: publicTask,
     });
 
-    await this.deps.queue.enqueue(`scheduled ${task.id}`, async () => {
-      try {
-        const started = await this.deps.orchestrator.startRun(
-          request,
-          runtimeCallbacks,
-        );
-        if (!started.started || started.status !== "running") {
+    await this.deps.queue.enqueue(
+      `scheduled:${task.id}`,
+      `scheduled ${task.id}`,
+      async () => {
+        try {
+          const started = await this.deps.orchestrator.startRun(
+            request,
+            runtimeCallbacks,
+          );
+          if (!started.started || started.status !== "running") {
+            lease.release();
+          }
+          await lease.wait();
+        } catch (error) {
           lease.release();
+          throw error;
         }
-        await lease.wait();
-      } catch (error) {
-        lease.release();
-        throw error;
-      }
-    }, publicTask);
+      },
+      publicTask,
+    );
   }
 
   private buildSyntheticRequest(

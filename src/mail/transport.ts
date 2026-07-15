@@ -26,6 +26,15 @@ export interface InboundMessage {
   internalDateMs?: number;
 }
 
+// A file to attach to an outbound email. `content` holds the bytes read at
+// enqueue time, so delivery no longer depends on the file still existing on
+// disk when the reply is finally sent.
+export interface OutboundAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface OutboundMessage {
   to: string;
   from?: string;
@@ -35,6 +44,7 @@ export interface OutboundMessage {
   references?: string[];
   text: string;
   html: string;
+  attachments?: OutboundAttachment[];
 }
 
 export interface OutboundResult {

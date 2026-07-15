@@ -403,6 +403,42 @@ export function getThreadRun(threadId: string): ThreadRunRecord | undefined {
   return row ? mapThreadRunRow(row) : undefined;
 }
 
+// Reverse lookup used by the file-delivery endpoint: the plugin only knows the
+// OpenCode sessionID, so map it back to its active thread run to find the reply
+// target. Restricted to active runs so a stale completed row never captures a
+// sessionID that a newer run has since reused.
+export function getActiveThreadRunBySessionId(
+  sessionId: string,
+): ThreadRunRecord | undefined {
+  const row = db
+    .prepare(
+      `SELECT
+         thread_id,
+         source_channel,
+         session_key,
+         session_id,
+         session_title,
+         gmail_message_id,
+         sender_email,
+         sender_name,
+         subject,
+         rfc_message_id,
+         last_user_text,
+         status,
+         last_error,
+         started_at_ms,
+         updated_at_ms
+       FROM thread_runs
+       WHERE session_id = ?
+         AND status IN ('running', 'waiting_permission', 'waiting_question')
+       ORDER BY updated_at_ms DESC
+       LIMIT 1`,
+    )
+    .get(sessionId) as ThreadRunRow | undefined;
+
+  return row ? mapThreadRunRow(row) : undefined;
+}
+
 export function listActiveThreadRuns(): ThreadRunRecord[] {
   const rows = db
     .prepare(

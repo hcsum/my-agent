@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import {
   clearPendingPermission,
   clearPendingQuestion,
+  getActiveThreadRunBySessionId,
   getLatestGmailThreadIdForCanonicalThread,
   getPendingPermission,
   getPendingQuestion,
@@ -37,7 +41,11 @@ import type { ScheduledResultPayload } from "./scheduler/types.js";
 import type { AppConfig } from "./types.js";
 import { WorkflowRunner } from "./workflow.js";
 import { MailTransportUnavailableError } from "./mail/transport.js";
-import type { MailTransport } from "./mail/transport.js";
+import type { MailTransport, OutboundAttachment } from "./mail/transport.js";
+
+// Cap on a single delivered file. Kept under the typical 25MB SMTP envelope
+// limit (base64 encoding inflates the payload by ~33%).
+const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024;
 
 interface ThreadMeta {
   gmailThreadId: string;
@@ -45,13 +53,26 @@ interface ThreadMeta {
   senderName: string;
   subject: string;
   messageId: string;
+  lastUserText: string;
 }
+
+export type FileDeliveryResult =
+  | { status: "buffered"; filename: string }
+  | { status: "no_session" }
+  | { status: "error"; error: string };
 
 export class GmailBridge {
   private connected = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
   private readonly threadMeta = new Map<string, ThreadMeta>();
   private readonly publicTasks = new Map<string, PublicTaskContext>();
+  // Files staged by the send_file_to_user plugin mid-run, keyed by canonical
+  // threadId. Drained onto the next terminal reply email for that thread so a
+  // generated/downloaded file rides along with the answer instead of being
+  // stranded on disk.
+  private readonly pendingAttachments = new Map<string, OutboundAttachment[]>();
   private readonly workflow: WorkflowRunner;
   private consecutiveErrors = 0;
   private userEmail = "";
@@ -73,6 +94,12 @@ export class GmailBridge {
   }
 
   async launch(): Promise<void> {
+    await this.connectAndStart();
+  }
+
+  private async connectAndStart(): Promise<void> {
+    if (this.connected || this.shuttingDown) return;
+
     let address: string;
     try {
       ({ address } = await this.transport.connect());
@@ -81,10 +108,12 @@ export class GmailBridge {
         console.warn(`[gmail] skipping — ${error.message}`);
         return;
       }
-      throw error;
+      await this.handleConnectFailure(error);
+      return;
     }
 
     this.connected = true;
+    this.reconnectAttempts = 0;
     this.userEmail = address;
     console.log(`[gmail] connected as ${this.userEmail}`);
 
@@ -97,6 +126,39 @@ export class GmailBridge {
     );
   }
 
+  private async handleConnectFailure(error: unknown): Promise<void> {
+    this.connected = false;
+    try {
+      await this.transport.close();
+    } catch {
+      // best-effort cleanup after a partially initialized IMAP/SMTP connection
+    }
+
+    if (this.shuttingDown) return;
+    this.scheduleReconnect(error);
+  }
+
+  private scheduleReconnect(error: unknown): void {
+    if (this.reconnectTimer || this.shuttingDown || this.connected) return;
+
+    this.reconnectAttempts += 1;
+    const delayMs = Math.min(
+      60_000,
+      5_000 * 2 ** Math.max(0, this.reconnectAttempts - 1),
+    );
+    console.error(
+      `[gmail] failed to connect; retrying in ${delayMs}ms`,
+      error,
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connectAndStart().catch((err) => {
+        void this.handleConnectFailure(err);
+      });
+    }, delayMs);
+  }
+
   // Stop claiming new messages without tearing down the Gmail client, so any
   // in-flight task can still send its reply and mark the message processed.
   // Full teardown happens in stop() once the drain is complete.
@@ -106,6 +168,10 @@ export class GmailBridge {
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
     console.log(
       `[gmail] shutdown initiated; ${this.inFlight.size} in-flight task(s) draining`,
@@ -131,9 +197,58 @@ export class GmailBridge {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.connected = false;
     await this.transport.close();
     console.log("[gmail] stopped");
+  }
+
+  // Stage a local file for delivery to the user, resolved from the OpenCode
+  // sessionID the plugin runs under. Returns `no_session` when the sessionID is
+  // not an active Gmail thread (e.g. a Telegram/TUI/scheduler session) so the
+  // caller can degrade gracefully rather than treat it as a failure. The file
+  // is read into memory now and attached to the thread's next terminal reply.
+  async enqueueFileForSession(params: {
+    sessionId: string;
+    path: string;
+    caption?: string;
+  }): Promise<FileDeliveryResult> {
+    const run = getActiveThreadRunBySessionId(params.sessionId);
+    if (!run || run.sourceChannel !== "gmail") {
+      return { status: "no_session" };
+    }
+
+    let content: Buffer;
+    try {
+      const stat = await fs.promises.stat(params.path);
+      if (!stat.isFile()) {
+        return { status: "error", error: `not a regular file: ${params.path}` };
+      }
+      if (stat.size > MAX_ATTACHMENT_BYTES) {
+        return {
+          status: "error",
+          error: `file is ${(stat.size / (1024 * 1024)).toFixed(1)}MB, above the ${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB email attachment limit`,
+        };
+      }
+      content = await fs.promises.readFile(params.path);
+    } catch (error) {
+      return {
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const filename = path.basename(params.path) || "attachment";
+    const existing = this.pendingAttachments.get(run.threadId) ?? [];
+    existing.push({ filename, content, contentType: guessContentType(filename) });
+    this.pendingAttachments.set(run.threadId, existing);
+    console.log(
+      `[gmail] staged attachment ${filename} (${content.byteLength} bytes) for thread ${run.threadId}${params.caption ? ` caption="${params.caption}"` : ""}`,
+    );
+    return { status: "buffered", filename };
   }
 
   private schedulePoll(): void {
@@ -263,15 +378,17 @@ export class GmailBridge {
         return;
       }
 
+      const textBody = stripQuotedReply(body).trim() || subject;
+
       this.threadMeta.set(threadId, {
         gmailThreadId,
         senderEmail,
         senderName,
         subject,
         messageId: rfcMessageId,
+        lastUserText: textBody,
       });
 
-      const textBody = stripQuotedReply(body).trim() || subject;
       const workflowCommand = this.workflow.parse(textBody);
       publicTask =
         this.publicTasks.get(threadId) ||
@@ -307,7 +424,9 @@ export class GmailBridge {
       }
 
       if (this.orchestrator.hasActiveRun(threadId)) {
-        await this.sendReply(threadId, buildAlreadyRunningReply());
+        await this.sendReply(threadId, buildAlreadyRunningReply(), {
+          flushAttachments: false,
+        });
         await this.markRead(messageId);
         markProcessed(messageId, threadId, subject, senderEmail);
         return;
@@ -423,6 +542,7 @@ export class GmailBridge {
       await this.sendReply(
         params.threadId,
         buildPermissionPrompt(params.pendingPermission, true),
+        { flushAttachments: false, includeOriginalContext: true },
       );
       await this.markRead(params.messageId);
       markProcessed(
@@ -469,6 +589,7 @@ export class GmailBridge {
       await this.sendReply(
         params.threadId,
         buildQuestionPrompt(params.pendingQuestion, true),
+        { flushAttachments: false, includeOriginalContext: true },
       );
       await this.markRead(params.messageId);
       markProcessed(
@@ -544,6 +665,7 @@ export class GmailBridge {
         senderName: run.senderName,
         subject: run.subject,
         messageId: run.rfcMessageId,
+        lastUserText: run.lastUserText,
       });
       this.publicTasks.set(
         run.threadId,
@@ -715,10 +837,22 @@ export class GmailBridge {
   private buildRuntimeCallbacks(threadId: string): RuntimeCallbacks {
     return {
       onPermission: async (request) => {
-        await this.sendReply(threadId, buildPermissionPrompt(request));
+        // Do not keep this thread's queue blocked while the run is waiting on a
+        // human reply; other threads can keep moving independently.
+        this.executionSlot.release(threadId);
+        await this.sendReply(threadId, buildPermissionPrompt(request), {
+          flushAttachments: false,
+          includeOriginalContext: true,
+        });
       },
       onQuestion: async (request) => {
-        await this.sendReply(threadId, buildQuestionPrompt(request));
+        // Same reasoning as permission prompts: once the model is waiting on
+        // the user, allow the next queued turn for this thread to start.
+        this.executionSlot.release(threadId);
+        await this.sendReply(threadId, buildQuestionPrompt(request), {
+          flushAttachments: false,
+          includeOriginalContext: true,
+        });
       },
       onComplete: async (text) => {
         await this.sendReply(threadId, text);
@@ -761,6 +895,7 @@ export class GmailBridge {
     action: () => Promise<T>,
   ): Promise<T> {
     return this.queue.enqueue(
+      runKey,
       label,
       async () => {
         const lease = this.executionSlot.begin(runKey);
@@ -787,7 +922,11 @@ export class GmailBridge {
     );
   }
 
-  private async sendReply(threadId: string, text: string): Promise<void> {
+  private async sendReply(
+    threadId: string,
+    text: string,
+    options?: { flushAttachments?: boolean; includeOriginalContext?: boolean },
+  ): Promise<void> {
     if (!this.connected) return;
 
     const meta = this.threadMeta.get(threadId);
@@ -799,10 +938,24 @@ export class GmailBridge {
     const subject = meta.subject.startsWith("Re:")
       ? meta.subject
       : `Re: ${meta.subject}`;
+    const references = buildReplyReferences(threadId, meta.messageId);
     const gmailThreadId =
       meta.gmailThreadId ||
       getLatestGmailThreadIdForCanonicalThread(threadId) ||
       threadId;
+
+    // Only terminal replies carry staged files; interstitial prompts (permission
+    // / question / already-running) pass flushAttachments:false so the file is
+    // held back for the final answer. Left in the buffer until the send succeeds
+    // so a retried terminal reply still carries it.
+    const staged =
+      options?.flushAttachments === false
+        ? undefined
+        : this.pendingAttachments.get(threadId);
+    const attachments = staged && staged.length > 0 ? staged : undefined;
+    const body = options?.includeOriginalContext
+      ? appendOriginalContext(text, meta)
+      : text;
 
     try {
       const sent = await this.transport.sendMessage({
@@ -810,10 +963,17 @@ export class GmailBridge {
         replyTo: this.getAgentInboxAddress() || meta.senderEmail,
         subject,
         inReplyTo: meta.messageId || undefined,
-        references: meta.messageId ? [meta.messageId] : undefined,
-        text,
-        html: markdownToHtml(text),
+        references,
+        text: body,
+        html: markdownToHtml(body),
+        attachments,
       });
+      if (attachments) {
+        this.pendingAttachments.delete(threadId);
+        console.log(
+          `[gmail] attached ${attachments.length} file(s) to reply thread=${threadId}`,
+        );
+      }
       const gmailMessageId = sent.messageId;
       const responseThreadId = sent.threadId || gmailThreadId;
       meta.gmailThreadId = responseThreadId;
@@ -1129,27 +1289,76 @@ function normalizeSessionTitleFragment(value: string): string {
 }
 
 function parsePermissionResponse(text: string): PermissionResponse | undefined {
-  const firstLine = text
+  const normalizedLines = text
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  const normalized = (firstLine || text.trim())
-    .toUpperCase()
-    .replace(/[.!?。！？]+$/g, "");
+    .map(normalizePermissionResponseLine)
+    .filter(Boolean);
 
-  if (/^(APPROVE|ALLOW|YES)\b/.test(normalized)) {
-    return "once";
-  }
+  for (const line of normalizedLines) {
+    if (/^(APPROVE|APPROVED|ALLOW|ALLOWED|YES|OK)\b/i.test(line)) {
+      return "once";
+    }
 
-  if (/^ALWAYS\b/.test(normalized)) {
-    return "always";
-  }
+    if (/^(ALWAYS|永久允许|一直允许|总是允许|总是|永久)\b/i.test(line)) {
+      return "always";
+    }
 
-  if (/^(REJECT|DENY|NO)\b/.test(normalized)) {
-    return "reject";
+    if (/^(REJECT|DENY|NO)\b/i.test(line)) {
+      return "reject";
+    }
+
+    if (/^(同意|可以|允许|批准|行)\b/i.test(line)) {
+      return "once";
+    }
+
+    if (/^(好|好的|嗯|行的)\b/i.test(line)) {
+      return "once";
+    }
+
+    if (/^(拒绝|不同意|不允许|不行)\b/i.test(line)) {
+      return "reject";
+    }
   }
 
   return undefined;
+}
+
+function normalizePermissionResponseLine(line: string): string {
+  return line
+    .trim()
+    .replace(/^(re|fw|fwd)\s*:\s*/gi, "")
+    .replace(/^[>*-\s]+/, "")
+    .replace(/[.!?。！？,，:：]+$/g, "");
+}
+
+function buildReplyReferences(threadId: string, messageId: string): string[] | undefined {
+  const references = [threadId, messageId].filter(isRfcMessageIdLike);
+  if (references.length === 0) return undefined;
+  return Array.from(new Set(references));
+}
+
+function isRfcMessageIdLike(value: string): boolean {
+  return /^<[^<>@\s]+@[^<>@\s]+>$/.test(value.trim());
+}
+
+function appendOriginalContext(text: string, meta: ThreadMeta): string {
+  const original = meta.lastUserText.trim();
+  if (!original) return text;
+
+  const quoted = original
+    .split(/\r?\n/)
+    .map((line) => `> ${line}`)
+    .join("\n");
+
+  return [
+    text.trimEnd(),
+    "",
+    "---",
+    "",
+    "Original message:",
+    "",
+    quoted,
+  ].join("\n");
 }
 
 function buildPermissionPrompt(
@@ -1270,6 +1479,30 @@ function parseSingleQuestionAnswer(
   }
 
   return [raw];
+}
+
+const CONTENT_TYPE_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".html": "text/html",
+  ".zip": "application/zip",
+  ".mp4": "video/mp4",
+  ".mp3": "audio/mpeg",
+};
+
+// Best-effort MIME hint from the extension. Falls back to undefined so
+// nodemailer applies its own default (application/octet-stream).
+function guessContentType(filename: string): string | undefined {
+  return CONTENT_TYPE_BY_EXT[path.extname(filename).toLowerCase()];
 }
 
 function buildAlreadyRunningReply(): string {

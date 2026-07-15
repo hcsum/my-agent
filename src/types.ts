@@ -65,6 +65,7 @@ export interface AppConfig {
   publicActivitySyncTimeoutMs: number;
   userTimezone: string;
   schedulerApiPort: number;
+  deliveryApiPort: number;
   schedulerMaxTasks: number;
   schedulerMinIntervalMinutes: number;
   publicActivityMaxEvents: number;

@@ -101,50 +101,55 @@ export class WorkflowRunner {
       });
 
     try {
-      return await this.queue.enqueue(label, async () => {
-        updateWorkflowJobStatus({ id: jobId, status: "running" });
-        this.publicActivity?.emit({
-          type: "knowledge_update_started",
-          task: publicTask,
-        });
+      return await this.queue.enqueue(
+        `${request.sourceChannel}:${request.sourceSession}`,
+        label,
+        async () => {
+          updateWorkflowJobStatus({ id: jobId, status: "running" });
+          this.publicActivity?.emit({
+            type: "knowledge_update_started",
+            task: publicTask,
+          });
 
-        const beforeSnapshot =
-          request.command.kind === "ingest" ? captureWikiSnapshot() : undefined;
+          const beforeSnapshot =
+            request.command.kind === "ingest" ? captureWikiSnapshot() : undefined;
 
-        const response = await this.orchestrator.sendTurn(
-          request.sourceChannel,
-          buildWorkflowTurnInput(request, jobId),
-        );
-
-        const validation =
-          request.command.kind === "ingest" && request.command.resolvedTarget && beforeSnapshot
-            ? validateIngestResult({
-                targetPath: request.command.resolvedTarget,
-                before: beforeSnapshot,
-                after: captureWikiSnapshot(),
-              })
-            : undefined;
-
-        if (validation && !validation.passed) {
-          throw new Error(
-            [
-              "Ingest validation failed.",
-              ...validation.errors,
-              ...validation.warnings.map((item) => `Warning: ${item}`),
-            ].join("\n"),
+          const response = await this.orchestrator.sendTurn(
+            request.sourceChannel,
+            buildWorkflowTurnInput(request, jobId),
           );
-        }
 
-        const finalResponse = appendValidationNotes(response, validation);
+          const validation =
+            request.command.kind === "ingest" && request.command.resolvedTarget && beforeSnapshot
+              ? validateIngestResult({
+                  targetPath: request.command.resolvedTarget,
+                  before: beforeSnapshot,
+                  after: captureWikiSnapshot(),
+                })
+              : undefined;
 
-        updateWorkflowJobStatus({
-          id: jobId,
-          status: "completed",
-          resultSummary: summarizeResult(finalResponse),
-        });
+          if (validation && !validation.passed) {
+            throw new Error(
+              [
+                "Ingest validation failed.",
+                ...validation.errors,
+                ...validation.warnings.map((item) => `Warning: ${item}`),
+              ].join("\n"),
+            );
+          }
 
-        return `Workflow job #${jobId} (${request.command.kind}) completed.\n\n${finalResponse}`;
-      }, publicTask);
+          const finalResponse = appendValidationNotes(response, validation);
+
+          updateWorkflowJobStatus({
+            id: jobId,
+            status: "completed",
+            resultSummary: summarizeResult(finalResponse),
+          });
+
+          return `Workflow job #${jobId} (${request.command.kind}) completed.\n\n${finalResponse}`;
+        },
+        publicTask,
+      );
     } catch (error) {
       updateWorkflowJobStatus({
         id: jobId,

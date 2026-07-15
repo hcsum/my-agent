@@ -165,6 +165,7 @@ export function loadConfig(): AppConfig {
       Number(process.env.PUBLIC_ACTIVITY_SYNC_TIMEOUT_MS) || 10000,
     userTimezone: process.env.USER_TIMEZONE?.trim() || "UTC",
     schedulerApiPort: Number(process.env.SCHEDULER_API_PORT) || 4097,
+    deliveryApiPort: Number(process.env.GMAIL_DELIVERY_PORT) || 4098,
     schedulerMaxTasks: Number(process.env.SCHEDULER_MAX_TASKS) || 20,
     schedulerMinIntervalMinutes:
       Number(process.env.SCHEDULER_MIN_INTERVAL_MINUTES) || 5,

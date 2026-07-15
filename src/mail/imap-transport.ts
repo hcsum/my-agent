@@ -36,6 +36,33 @@ const MAX_POLL_MESSAGES = 10;
 // Cap on the per-message parsed-source cache so long-running processes don't
 // accumulate full message bodies for messages that were already handled.
 const MAX_PARSED_CACHE = 32;
+const CONNECT_TIMEOUT_MS = Number(process.env.GMAIL_CONNECT_TIMEOUT_MS) || 30_000;
+const GREETING_TIMEOUT_MS =
+  Number(process.env.GMAIL_GREETING_TIMEOUT_MS) || 15_000;
+const SOCKET_TIMEOUT_MS = Number(process.env.GMAIL_SOCKET_TIMEOUT_MS) || 120_000;
+
+interface SmtpOptions {
+  host: string;
+  port: number;
+  secure: boolean;
+  auth: { user: string; pass: string };
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
+  proxy?: string;
+}
+
+function getSharedProxy(): string | undefined {
+  return (
+    process.env.HTTPS_PROXY?.trim() ||
+    process.env.https_proxy?.trim() ||
+    process.env.ALL_PROXY?.trim() ||
+    process.env.all_proxy?.trim() ||
+    process.env.HTTP_PROXY?.trim() ||
+    process.env.http_proxy?.trim() ||
+    undefined
+  );
+}
 
 // IMAP (receive) + SMTP (send) transport. Requires nothing beyond a mailbox
 // address and an app password — no OAuth client, no token expiry, no Google
@@ -63,14 +90,24 @@ export class ImapSmtpTransport implements MailTransport {
       );
     }
 
+    const proxy = getSharedProxy();
+    console.log(
+      `[gmail] connecting IMAP ${this.config.imapHost}:${this.config.imapPort} / SMTP ${this.config.smtpHost}:${this.config.smtpPort}${proxy ? " via proxy" : ""}`,
+    );
     await this.ensureImap();
 
-    this.smtp = nodemailer.createTransport({
+    const smtpOptions: SmtpOptions = {
       host: this.config.smtpHost,
       port: this.config.smtpPort,
       secure: this.config.smtpSecure,
       auth: { user: this.config.user, pass: this.config.password },
-    });
+      connectionTimeout: CONNECT_TIMEOUT_MS,
+      greetingTimeout: GREETING_TIMEOUT_MS,
+      socketTimeout: SOCKET_TIMEOUT_MS,
+      ...(proxy ? { proxy } : {}),
+    };
+    this.smtp = nodemailer.createTransport(smtpOptions);
+    console.log(`[gmail] verifying SMTP ${this.config.smtpHost}:${this.config.smtpPort}`);
     await this.smtp.verify();
 
     console.log(
@@ -168,6 +205,11 @@ export class ImapSmtpTransport implements MailTransport {
       references: message.references,
       text: message.text,
       html: message.html,
+      attachments: message.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        content: attachment.content,
+        contentType: attachment.contentType,
+      })),
     });
 
     const messageId = info.messageId || "";
@@ -213,12 +255,17 @@ export class ImapSmtpTransport implements MailTransport {
   private async ensureImap(): Promise<ImapFlow> {
     if (this.client && this.client.usable) return this.client;
 
+    const proxy = getSharedProxy();
     const options: ImapFlowOptions = {
       host: this.config.imapHost,
       port: this.config.imapPort,
       secure: this.config.imapSecure,
       auth: { user: this.config.user, pass: this.config.password },
       logger: false,
+      connectionTimeout: CONNECT_TIMEOUT_MS,
+      greetingTimeout: GREETING_TIMEOUT_MS,
+      socketTimeout: SOCKET_TIMEOUT_MS,
+      ...(proxy ? { proxy } : {}),
     };
     const client = new ImapFlow(options);
     client.on("error", (err) => console.warn("[gmail] IMAP client error", err));

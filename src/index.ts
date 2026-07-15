@@ -10,6 +10,7 @@ import { PublicEventPublisher } from "./public-activity.js";
 import { PublicActivityReplicator } from "./public-activity-sync.js";
 import { SerialQueue } from "./queue.js";
 import { GmailBridge } from "./gmail.js";
+import { DeliveryApi } from "./delivery-api.js";
 import { createMailTransport } from "./mail/factory.js";
 import { initDatabase } from "./db.js";
 import { getRuntimeLogPath, setupFileLogging } from "./logger.js";
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
   const launches: Promise<void>[] = [];
   let scheduler: Scheduler | undefined;
   let bridge: GmailBridge | undefined;
+  let deliveryApi: DeliveryApi | undefined;
 
   if (config.channels.gmail?.inboxEmail) {
     bridge = new GmailBridge(
@@ -70,6 +72,12 @@ async function main(): Promise<void> {
     );
     launches.push(
       bridge.launch().catch((err) => console.error("[gmail] failed to start", err)),
+    );
+    deliveryApi = new DeliveryApi(bridge, config.deliveryApiPort);
+    launches.push(
+      deliveryApi
+        .start()
+        .catch((err) => console.error("[delivery-api] failed to start", err)),
     );
   }
 
@@ -145,6 +153,7 @@ async function main(): Promise<void> {
     //    so in-flight tasks had the server available right up to here.
     try {
       await scheduler?.stop();
+      await deliveryApi?.stop();
       await bridge?.stop();
       await publicActivityReplicator?.stop();
     } catch (error) {
