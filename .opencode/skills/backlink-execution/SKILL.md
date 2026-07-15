@@ -1,6 +1,6 @@
 ---
 name: backlink-execution
-description: Execute live backlink placements from an existing target CSV. Use when the user asks to do backlink building, build backlinks, work through a backlink candidates CSV, register or submit a target site, create live listings/posts/profiles/comments, or handle real submission flows on target sites. Only use this after targets already exist in CSV. Not for competitor export parsing, candidate generation, or `doable` triage; use `backlink-prospecting` for that.
+description: Execute live backlink placements from an existing target CSV. Use when the user asks to do backlink building, build backlinks, work through a backlink candidates CSV, register or submit a target site, create live listings/posts/profiles/comments, or handle real submission flows on target sites. Only use this after targets already exist in CSV. Not for competitor export parsing, candidate generation, or `difficulty` triage; use `backlink-prospecting` for that.
 ---
 
 Build real backlink placements from an existing target list. This skill owns execution, not prospecting.
@@ -51,12 +51,12 @@ Your effort goes to exactly three things. Everything else is a hand-off.
 
 ## Status: Two Separate Axes
 
-Status lives in **two different columns**. Never collapse them — in particular, never write `done` / `reviewing` / `parked` into `doable`.
+Status lives in **two different columns**. Never collapse them — in particular, never write `done` / `reviewing` / `parked` into `difficulty`.
 
-**`doable` — site-level, project-agnostic.** Whether the site can produce a backlink at all. This is a durable property of the *site*: it is identical for every project and does **not** change when one project gets its link. Pick the tightest fit:
-  - `yes` — site has a usable link surface, placeable with low/moderate effort
-  - `hard` — a link surface exists but every placement needs live user interaction (captcha on submit, hidden form needs a click trigger, Blogger-style popup, reCAPTCHA v2); doable next run with the user present
-  - `no` — permanently not actionable: dead site, paid wall, auto-generated page, web2.0 blog cluster, or genuinely no link surface even after login. A plain login wall is **not** `no` — that is a per-project `parked` hand-off on a `yes`/`hard` site.
+**`difficulty` — site-level, project-agnostic.** How hard it is to get a link out of this site (or that it turned out to have none). A durable property of the *site*: identical for every project and does **not** change when one project gets its link. Prospecting seeds it (`easy` / `hard`); execution refines it and may set `no` when a listed target turns out dead. Pick the tightest fit:
+  - `easy` — low-friction, largely self-serve: blog comments, directory/nav submissions, GitBook/docs-style PR links, open profile fields
+  - `hard` — a real link surface exists but placement is non-trivial: live user interaction (captcha on submit, hidden form needs a click trigger, Blogger-style popup, reCAPTCHA v2), registration + moderation, or an editorial/outreach pitch; doable next run, often with the user present
+  - `no` — discovered at execution time to be not actionable: dead site, paid wall, auto-generated page, web2.0 blog cluster, or genuinely no link surface even after login. A plain login wall is **not** `no` — that is a per-project `parked` hand-off on an `easy`/`hard` site. (Prospecting never assigns `no`; it drops worthless rows instead.)
 
 **Per-project column — the outcome for one project on this site.** Each project has its own column; a site can be live for one project and untouched for another. Write that project's status here as `<status>, <detail>` (quote the cell since it contains a comma):
   - a bare live `<url>` — **done, with link**: the target URL renders as a real clickable `<a href>`, not plain text. The normal success case.
@@ -64,13 +64,13 @@ Status lives in **two different columns**. Never collapse them — in particular
   - `reviewing, <url>` — **submitted, awaiting moderation/approval**. Include the submission or profile URL when there is one; otherwise just `reviewing`.
   - `parked, <reason>` — blocked on a manual step the user can clear, e.g. `parked, needs login`, `parked, check email to verify`, `parked, user must complete <field>`. Will unblock once the user acts.
 
-If the site is inaccessible, the submission path is dead, or the flow is clearly broken, set `doable=no` immediately and move on. Always record the concrete blocker reason in `note` so the next run does not rediscover it from scratch.
+If the site is inaccessible, the submission path is dead, or the flow is clearly broken, set `difficulty=no` immediately and move on. Always record the concrete blocker reason in `note` so the next run does not rediscover it from scratch.
 
 ## CSV Discipline
 
 Update the tracking CSV after **each** target attempt — never batch it to the end of the run. One target = one write-back. The `note` column is the durable memory of the run: it is what makes the *next* attempt (a new project on the same site, or a re-visit of a blocker) cheap instead of a rediscovery.
 
-For `notes/projects/backlink-master.csv`, the per-project status goes in that project's own column (`done` with the live URL / `done, no link` / `reviewing, <url>` / `parked, <reason>` — see [Status: Two Separate Axes](#status-two-separate-axes)). The `doable` column stays site-level (`yes` / `hard` / `no`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
+For `notes/projects/backlink-master.csv`, the per-project status goes in that project's own column (`done` with the live URL / `done, no link` / `reviewing, <url>` / `parked, <reason>` — see [Status: Two Separate Axes](#status-two-separate-axes)). The `difficulty` column stays site-level (`easy` / `hard` / `no`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
 
 What to put in `note`, every time:
 
@@ -89,6 +89,6 @@ Write `note` as terse, factual prose a future run can act on directly — not a 
 
 ## Output
 
-- Report each target on both axes: the site `doable` (`yes` / `hard` / `no`) and the per-project outcome (`done` with URL / `done, no link` / `reviewing` / `parked` with reason).
+- Report each target on both axes: the site `difficulty` (`easy` / `hard` / `no`) and the per-project outcome (`done` with URL / `done, no link` / `reviewing` / `parked` with reason).
 - Include the live placement URL when available.
 - Include any user hand-off step that is still blocking progress.

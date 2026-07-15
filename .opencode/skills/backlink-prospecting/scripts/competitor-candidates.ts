@@ -6,14 +6,20 @@ import path from "node:path";
 // export. For each referring domain NOT already in notes/projects/backlink-master.csv,
 // emit one row with the domain's authority score and a representative live link
 // (Source url + follow status) as a worked example of how that domain hosts
-// an outbound link. `doable` is left blank for the agent to triage.
+// an outbound link. `difficulty` is left blank for the agent to triage
+// (easy / hard) — see SKILL.md. Two dimensions: value is a *gate* (worthless
+// rows never enter the CSV), difficulty is the *column* (easy vs hard).
+//
+// High-confidence junk (programmatic report/stat/share/listing pages keyed off
+// an id) is auto-dropped by the value gate below and reported in `dropped_junk`;
+// the agent removes any remaining worthless rows during triage.
 //
 // Usage:
 //   npx tsx competitor-candidates.ts <competitor-substring>
 //   e.g. npx tsx competitor-candidates.ts polybuzz
 // Finds the newest "<sub>*-backlinks.csv" and "<sub>*refdomains.csv" in
 // ~/Downloads (falls back to notes/projects/site-backlinks). Writes
-// notes/seo/backlink-candidates-<competitor>.csv, preserving any `doable`
+// notes/seo/backlink-candidates-<competitor>.csv, preserving any `difficulty`
 // values already filled in a prior run.
 
 const DOWNLOADS = path.join(os.homedir(), "Downloads");
@@ -81,6 +87,22 @@ function col(header: string[], name: string): number {
 
 function normDomain(host: string): string {
   return host.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+}
+
+// Value gate: high-confidence worthless targets that should never enter the CSV.
+// Conservative on purpose — only mechanical, programmatically-generated link
+// surfaces (nothing to submit) and blatant PBN/SEO-spam. Judgment calls
+// (editorial blogs, off-topic-but-real sites) are left to the agent's triage.
+function isJunk(domain: string, url: string): boolean {
+  const d = domain.toLowerCase();
+  const u = url.toLowerCase();
+  // Programmatic report/stat/share/listing pages keyed off an opaque id.
+  if (/\/(report|stats|share|view|domain)\/[\w%-]*\d/.test(u)) return true;
+  if (/list\.php\?part=/.test(u)) return true;
+  if (/\/all\/\d+\/\d+/.test(u)) return true;
+  // Blatant PBN / paid-backlink / SEO-spam domains.
+  if (/(^|[.-])(fiverr-|seo-|seogeko)|-seo-|links\.agency|buy.*backlink/.test(d)) return true;
+  return false;
 }
 
 function hostOf(url: string): string {
@@ -200,25 +222,35 @@ function main() {
   }
 
   const candidates = new Set<string>();
-  for (const d of reps.keys()) if (!masterSet.has(d)) candidates.add(d);
+  const droppedJunk: string[] = [];
+  for (const d of reps.keys()) {
+    if (masterSet.has(d)) continue;
+    if (isJunk(d, reps.get(d)!.example)) {
+      droppedJunk.push(d);
+      continue;
+    }
+    candidates.add(d);
+  }
   const refOnlyNew = refOrder.filter((d) => !masterSet.has(d) && !reps.has(d)).length;
 
   const outFile = path.join(REPO, "notes/projects", `backlink-candidates-${competitor}.csv`);
-  const priorDoable = new Map<string, string>();
+  // Preserve prior triage. Accept the legacy `doable` header too so old
+  // candidate files migrate cleanly on re-run.
+  const priorDifficulty = new Map<string, string>();
   if (fs.existsSync(outFile)) {
     const prior = readCsv(outFile);
     const pw = prior.header.indexOf("website");
-    const pd = prior.header.indexOf("doable");
+    const pd = prior.header.indexOf("difficulty") !== -1 ? prior.header.indexOf("difficulty") : prior.header.indexOf("doable");
     if (pw !== -1 && pd !== -1) {
       for (const r of prior.rows) {
         const d = normDomain((r[pw] ?? "").trim());
         const v = (r[pd] ?? "").trim();
-        if (d && v) priorDoable.set(d, v);
+        if (d && v) priorDifficulty.set(d, v);
       }
     }
   }
 
-  const header = ["website", "doable", "AS", "example_source", "dofollow"];
+  const header = ["website", "difficulty", "AS", "example_source", "dofollow"];
   const out: string[][] = [...candidates]
     .map((d) => {
       const rep = reps.get(d);
@@ -228,7 +260,7 @@ function main() {
         as: Number(as) || 0,
         row: [
           d,
-          priorDoable.get(d) ?? "",
+          priorDifficulty.get(d) ?? "",
           String(Number(as) || 0),
           rep?.example ?? "",
           rep ? (rep.dofollow ? "true" : "false") : "",
@@ -252,8 +284,10 @@ function main() {
         already_in_master: refOrder.length ? refOrder.filter((d) => masterSet.has(d)).length : null,
         new_candidates_with_example: out.length,
         dofollow_examples: dofollowCount,
+        dropped_junk: droppedJunk.length,
+        dropped_junk_domains: droppedJunk.length ? droppedJunk : null,
         refdomains_new_but_no_example_in_export: refOnlyNew || null,
-        preserved_doable: priorDoable.size,
+        preserved_difficulty: priorDifficulty.size,
         written: outFile,
       },
       null,
