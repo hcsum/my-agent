@@ -82,7 +82,12 @@ export async function resolveLocalBrowser(config) {
       if (!(port > 0 && port < 65536)) continue;
       if (!(await checkPort(port))) continue;
       const { verified, wsPath } = await fetchWsPath(port, lines[1] || null);
-      if (!verified) continue;
+      // Prefer a /json/version-verified endpoint, but fall back to the ws path
+      // from DevToolsActivePort (line 2) when present. A Chrome whose remote
+      // debugging was enabled via the chrome://inspect checkbox binds the port
+      // and serves a live browser websocket, yet blocks the /json endpoints —
+      // the DevToolsActivePort ws path is the only usable handle in that mode.
+      if (!verified && !wsPath) continue;
       return {
         provider: 'local',
         browserMode: config.browserMode,
