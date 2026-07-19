@@ -21,6 +21,20 @@ Your effort goes to exactly three things. Everything else is a hand-off.
 - Keep the tracking CSV accurate after every target, not in a batch at the end.
 - Avoid wasting time on dead sites, broken flows, mailbox gates, captchas, login walls, and high-friction form fields.
 
+## The Board Is The User's View
+
+The user works from `notes/projects/backlink-board.html`, not from the raw CSV. The CSV stays the source of truth; the board is a generated read-only view of it.
+
+```
+notes/projects/backlink-master.csv          ← source of truth, you edit this
+  ↓  node .opencode/skills/backlink-execution/scripts/build-board.mjs [--open]
+notes/projects/backlink-board.html          ← what the user actually opens
+```
+
+The board bakes the CSV in as a JSON literal, so **it does not update on its own**. Regenerate it at the end of every run that touched the CSV, and tell the user it is refreshed. A stale board is worse than no board — it is what caused the user to distrust this list in the first place.
+
+The board's default view is **🎯 补齐缺口**: domains already proven `live` on ≥2 projects, showing which projects still have no live link. That ranking only works if statuses are accurate, which is why the write-back rules below are strict.
+
 ## Before You Start
 
 - Confirm which tracking file drives the run: usually `notes/projects/backlink-master.csv`, sometimes a project-specific candidates CSV.
@@ -53,24 +67,37 @@ Your effort goes to exactly three things. Everything else is a hand-off.
 
 Status lives in **two different columns**. Never collapse them — in particular, never write `done` / `reviewing` / `parked` into `difficulty`.
 
-**`difficulty` — site-level, project-agnostic.** How hard it is to get a link out of this site (or that it turned out to have none). A durable property of the *site*: identical for every project and does **not** change when one project gets its link. Prospecting seeds it (`easy` / `hard`); execution refines it and may set `no` when a listed target turns out dead. Pick the tightest fit:
+**`difficulty` — site-level, project-agnostic.** How hard it is to get a link out of this site, or that it is off the list for good. A durable property of the *site*: identical for every project and does **not** change when one project gets its link. Prospecting seeds it (`easy` / `hard`); execution refines it. Pick the tightest fit:
   - `easy` — low-friction, largely self-serve: blog comments, directory/nav submissions, GitBook/docs-style PR links, open profile fields
   - `hard` — a real link surface exists but placement is non-trivial: live user interaction (captcha on submit, hidden form needs a click trigger, Blogger-style popup, reCAPTCHA v2), registration + moderation, or an editorial/outreach pitch; doable next run, often with the user present
-  - `no` — discovered at execution time to be not actionable: dead site, paid wall, auto-generated page, web2.0 blog cluster, or genuinely no link surface even after login. A plain login wall is **not** `no` — that is a per-project `parked` hand-off on an `easy`/`hard` site. (Prospecting never assigns `no`; it drops worthless rows instead.)
+  - `dead` — never attempt again, for either of two reasons: (a) not actionable — dead site, paid wall, auto-generated page, genuinely no link surface even after login; or (b) the user tried it and rejected it as not worth the money or effort. A plain login wall is **not** `dead` — that is a per-project `parked` hand-off on an `easy`/`hard` site.
 
-**Per-project column — the outcome for one project on this site.** Each project has its own column; a site can be live for one project and untouched for another. Write that project's status here as `<status>, <detail>` (quote the cell since it contains a comma):
-  - a bare live `<url>` — **done, with link**: the target URL renders as a real clickable `<a href>`, not plain text. The normal success case.
-  - `done, no link` — the placement went through but the site yields no usable clickable backlink (link stripped, or the surface is plain-text/no-href). Nothing more to attempt for this project.
-  - `reviewing, <url>` — **submitted, awaiting moderation/approval**. Include the submission or profile URL when there is one; otherwise just `reviewing`.
-  - `parked, <reason>` — blocked on a manual step the user can clear, e.g. `parked, needs login`, `parked, check email to verify`, `parked, user must complete <field>`. Will unblock once the user acts.
+**Never delete a rejected row — set `difficulty=dead` instead.** `backlink-prospecting` dedups new candidate lists against this file, so a deleted domain comes back as a fresh candidate and the user re-spends time or money on a site they already ruled out. The board hides `dead` rows entirely, so marking it is indistinguishable from deleting it from the user's side. Always record *why* in `note`, with the date and who decided.
 
-If the site is inaccessible, the submission path is dead, or the flow is clearly broken, set `difficulty=no` immediately and move on. Always record the concrete blocker reason in `note` so the next run does not rediscover it from scratch.
+**Per-project columns — the outcome for one project on this site.** Each project owns **two** columns: `<project>` holds the status, `<project>_detail` holds the URL or the reason. Never put a URL, a reason, or a comma-bearing sentence in the status column — that is what corrupted this file before.
+
+| `<project>` | `<project>_detail` | meaning |
+|---|---|---|
+| `live` | the live URL | the target URL renders as a real clickable `<a href>`, not plain text. The normal success case, and the only status that counts as a placement. |
+| `reviewing` | submission/profile URL, if any | submitted, awaiting moderation/approval |
+| `parked` | the blocker | blocked on a manual step the user can clear: `needs login`, `check email to verify`, `weekly limit reached`, `captcha needs user`. Unblocks once the user acts. |
+| `nolink` | the page URL | the placement went through but yields no usable clickable backlink (link stripped, or surface is plain-text). Nothing more to attempt. |
+| `unverified` | — | recorded as placed by an older run with no URL to prove it. Needs a check, do not trust it. |
+| *(empty)* | — | never attempted for this project. This is what the board's gap view offers as actionable work. |
+
+Only `live` counts. `parked` and `reviewing` are **not** placements — treating them as such is exactly how a previous version of this list reported never-placed targets as proven ones.
+
+If the site is inaccessible, the submission path is dead, or the flow is clearly broken, set `difficulty=dead` immediately and move on. Always record the concrete blocker reason in `note` so the next run does not rediscover it from scratch.
 
 ## CSV Discipline
 
 Update the tracking CSV after **each** target attempt — never batch it to the end of the run. One target = one write-back. The `note` column is the durable memory of the run: it is what makes the *next* attempt (a new project on the same site, or a re-visit of a blocker) cheap instead of a rediscovery.
 
-For `notes/projects/backlink-master.csv`, the per-project status goes in that project's own column (`done` with the live URL / `done, no link` / `reviewing, <url>` / `parked, <reason>` — see [Status: Two Separate Axes](#status-two-separate-axes)). The `difficulty` column stays site-level (`easy` / `hard` / `no`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
+For `notes/projects/backlink-master.csv`, the per-project outcome goes in that project's **status + `_detail` pair** — see [Status: Two Separate Axes](#status-two-separate-axes). The `difficulty` column stays site-level (`easy` / `hard` / `dead`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
+
+Adding a new project means adding two columns, `<project>` and `<project>_detail`; the board picks them up automatically with no code change.
+
+**Record link quality in `note`, always.** dofollow vs nofollow decides whether a placement is worth anything, and it goes stale — sites change their `rel` without warning. State the observed `rel`, the verification date, and who checked. A high-DR nofollow target (cal.com DR92 is the standing example) looks like the best row on the board while passing no PageRank; without this note the user keeps being drawn back to it.
 
 What to put in `note`, every time:
 
@@ -89,6 +116,12 @@ Write `note` as terse, factual prose a future run can act on directly — not a 
 
 ## Output
 
-- Report each target on both axes: the site `difficulty` (`easy` / `hard` / `no`) and the per-project outcome (`done` with URL / `done, no link` / `reviewing` / `parked` with reason).
-- Include the live placement URL when available.
+- Report each target on both axes: the site `difficulty` (`easy` / `hard` / `dead`) and the per-project outcome (`live` / `reviewing` / `parked` / `nolink`) with its `_detail`.
+- Include the live placement URL when available, and the observed `rel` (dofollow/nofollow).
 - Include any user hand-off step that is still blocking progress.
+- Regenerate the board (`node .opencode/skills/backlink-execution/scripts/build-board.mjs`) and say so, so the user knows what they open is current.
+
+## Scripts
+
+- `scripts/build-board.mjs` — regenerate `backlink-board.html` from the CSV. Run after any CSV change. `--open` also opens it.
+- `scripts/migrate-master.mjs` — one-shot migration that split the old single-column-per-project schema into status + `_detail` (run 2026-07-19). Kept for provenance; do not re-run.

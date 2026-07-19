@@ -56,6 +56,8 @@ A competitor export dominated by the above means few real targets — that is ex
 
 When unsure, default to `hard`. Difficulty rates effort, not link quality — do not downgrade a keeper because the link is nofollow or off-topic.
 
+`dead` is a third value you never assign but must respect: it marks a site already tried and ruled out (no link surface, or the user judged it not worth the money). Dedup keeps those rows out of new candidate lists — that is the whole reason rejected sites stay in `backlink-master.csv` instead of being deleted. Never resurrect a `dead` row into a candidates file.
+
 ## Handoff To Execution
 
 - This skill stops at target generation, dedup, and value/difficulty triage.
@@ -65,7 +67,8 @@ When unsure, default to `hard`. Difficulty rates effort, not link quality — do
 ## Promote Keepers
 
 - Triage row by row in `backlink-candidates-<competitor>.csv`: delete worthless rows (value gate), then set `difficulty` (`easy` / `hard`) on the rest.
-- Promote only the keepers into `backlink-master.csv` so future runs dedup correctly.
+- Promote only the keepers into `backlink-master.csv` so future runs dedup correctly. Each project there owns a **status + `_detail` column pair**; leave both empty on a newly promoted row — `backlink-execution` fills them.
+- After promoting, regenerate the user's view: `node .opencode/skills/backlink-execution/scripts/build-board.mjs`.
 - Re-running the script is safe; it preserves prior `difficulty` decisions already written in the candidates file (and migrates a legacy `doable` column).
 
 ## Caveats
