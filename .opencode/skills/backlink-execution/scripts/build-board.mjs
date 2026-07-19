@@ -127,10 +127,10 @@ h2.grp span{font-weight:400;font-size:12px;opacity:.7}
 </style></head><body>
 <header>
   <h1>Backlink Board</h1>
+  <div class="tabs" id="scopes"></div>
   <div class="tabs" id="tabs"></div>
   <div class="bar">
     <input type="search" id="q" placeholder="搜索域名 / note…">
-    <select id="coreproj"></select>
     <select id="tier">
       <option value="2">✅ 已验证（≥2 个项目发成功过）</option>
       <option value="1">🟡 用过一次（≥1 个项目）</option>
@@ -151,131 +151,100 @@ const PROJECTS=${JSON.stringify(projects)};
 const MAIN=${JSON.stringify(mainProjects)};
 const GAP="__gap__",CORE="__core__";
 const CORELABEL={dofollow:"✅ dofollow + 可索引 — 主力，按 DR 从高到低",nofollow:"🟡 nofollow — 页面能被索引，有引荐流量，顺手做别排前面",noindex:"❌ 整页 noindex — 不传权重也没引荐流量","":"⬜ rel 未核实 — 去页面上看一眼补上"};
-let cur=CORE;
-// Baseline view drills down in three levels: 保底名单 → 项目 → 已发/未发/全部.
-const ALLPROJ="__allproj__";
+// Three INDEPENDENT filters that compose, not three separate pages. Picking a
+// project used to swap the whole view and drop you out of the baseline list,
+// which is why it never read as a funnel:
+//   1. scope — which set of domains        (保底名单 / 全部域名 / 补齐缺口)
+//   2. proj  — whose worklist              (全部项目 / one project)
+//   3. view  — 待发 / 已发 / 全部
+const ALL="__all__",ALLPROJ="__allproj__";
+let scope=CORE,proj=ALLPROJ,view="todo";
 const $=(id)=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-$("tabs").innerHTML=\`<button class="tab core" data-p="\${CORE}">🏆 保底名单</button>\`
-  +\`<button class="tab gap" data-p="\${GAP}">🎯 补齐缺口</button>\`
-  +PROJECTS.map(p=>\`<button class="tab" data-p="\${p}">\${p}</button>\`).join("");
-$("tabs").onclick=e=>{const p=e.target.dataset.p;if(!p)return;cur=p;
-  // Per-tab filter defaults. The gap view is explicitly about *proven* domains;
-  // a project tab is a worklist and must never hide work behind a filter.
-  $("tier").value=p===GAP?"2":"0";
-  $("easyOnly").checked=p===GAP;
+$("scopes").innerHTML=\`<button class="tab core" data-s="\${CORE}">🏆 保底名单</button>\`
+  +\`<button class="tab" data-s="\${ALL}">📋 全部域名</button>\`
+  +\`<button class="tab gap" data-s="\${GAP}">🎯 补齐缺口</button>\`;
+$("scopes").onclick=e=>{const s=e.target.dataset.s;if(!s)return;scope=s;
+  // The gap view is explicitly about *proven* domains; the other scopes are
+  // worklists and must never hide work behind a filter.
+  $("tier").value=s===GAP?"2":"0";
+  $("easyOnly").checked=s===GAP;
   render();};
-$("coreproj").innerHTML=\`<option value="\${ALLPROJ}">全部项目</option>\`
-  +MAIN.map(p=>\`<option value="\${p}">\${p}</option>\`).join("");
-["q","easyOnly","tier","coreproj"].forEach(id=>$(id).addEventListener("input",render));
-let view="todo";
+
+$("tabs").innerHTML=\`<button class="tab" data-p="\${ALLPROJ}">全部项目</button>\`
+  +PROJECTS.map(p=>\`<button class="tab" data-p="\${p}">\${p}</button>\`).join("");
+$("tabs").onclick=e=>{const p=e.target.dataset.p;if(!p)return;proj=p;render();};
+
 $("seg").onclick=e=>{const v=e.target.dataset.v;if(!v)return;view=v;
   [...$("seg").children].forEach(b=>b.classList.toggle("on",b.dataset.v===v));render();};
+["q","easyOnly","tier"].forEach(id=>$(id).addEventListener("input",render));
+
+// Baseline admission = what we verified on the page ourselves: the anchor passes
+// value (dofollow, or nofollow for referral) AND the page is indexable (robots
+// checked, not noindex). GSC confirmation is a bonus badge, NOT the gate -
+// gating on it required a domain to already be placed *and* reported, so no new
+// target could ever enter the list a brand-new project is meant to be handed.
+// Absence from GSC is absence of evidence: wox.cc has 3 Semrush links, 0 in GSC.
+const WORTH=["dofollow","nofollow"];
+const inCore=d=>WORTH.includes(d.follow)&&d.robotsChecked;
 
 function render(){
-  [...$("tabs").children].forEach(b=>b.setAttribute("aria-selected",b.dataset.p===cur));
+  [...$("scopes").children].forEach(b=>b.setAttribute("aria-selected",b.dataset.s===scope));
+  [...$("tabs").children].forEach(b=>b.setAttribute("aria-selected",b.dataset.p===proj));
   const q=$("q").value.toLowerCase().trim();
-  const minTier=+$("tier").value;
   const easyOnly=$("easyOnly").checked;
-  $("seg").style.display=cur===GAP?"none":"";
   // The baseline list is a fixed, hand-vetted set — the generic filters would
   // silently shrink it, which is exactly the "list I can't trust" problem.
-  // The project picker is the opposite: it is the whole point of this view.
   // NOT parentElement for #tier — it sits directly in .bar, so that hides the
   // whole toolbar. Only #easyOnly needs its wrapping <label> hidden.
-  $("tier").style.display=cur===CORE?"none":"";
-  $("easyOnly").parentElement.style.display=cur===CORE?"none":"";
-  $("coreproj").style.display=cur===CORE?"":"none";
+  $("tier").style.display=scope===CORE?"none":"";
+  $("easyOnly").parentElement.style.display=scope===CORE?"none":"";
 
-  if(cur===CORE) return renderCore(q);
-
-  let all=DATA.filter(d=>d.tier>=minTier)
-    .filter(d=>!q||d.website.toLowerCase().includes(q)||d.note.toLowerCase().includes(q));
-  if(easyOnly) all=all.filter(d=>d.difficulty!=="hard");
-
-  if(cur===GAP){
-    // Every (proven domain × project with no live link yet) = one unit of work.
-    // parked/reviewing are excluded — they're blocked or already in flight.
-    const list=all.map(d=>({d,need:MAIN.filter(p=>d.status[p]!=="live")})).filter(x=>x.need.length);
-    // Sort by how much is actionable right now, not by raw gap count.
-    const open=x=>x.need.filter(p=>!x.d.status[p]).length;
-    list.sort((a,b)=>open(b)-open(a)||b.d.tier-a.d.tier||(b.d.dr??-1)-(a.d.dr??-1));
-    const total=all.length*MAIN.length;
-    const live=total-list.reduce((n,x)=>n+x.need.length,0);
-    const actionable=list.reduce((n,x)=>n+open(x),0);
-    $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
-    $("count").textContent=\`\${all.length} 个域名 × \${MAIN.length} 个项目 = \${total} 个位置｜✅ live \${live}｜👉 现在能发 \${actionable}｜其余是卡住/审核中\`;
-    $("list").innerHTML=list.length?list.map(x=>card(x.d,x.need)).join(""):'<div class="empty">这一档已经全部补齐了 🎉 换到下一档。</div>';
-    return;
+  // --- Level 1: scope ---
+  let pool=DATA.filter(d=>!q||d.website.toLowerCase().includes(q)||d.note.toLowerCase().includes(q));
+  if(scope===CORE) pool=pool.filter(inCore);
+  else{
+    pool=pool.filter(d=>d.tier>=+$("tier").value);
+    if(easyOnly) pool=pool.filter(d=>d.difficulty!=="hard");
+    // 补齐缺口 = domains already proven on ≥2 projects that some project still lacks.
+    if(scope===GAP) pool=pool.filter(d=>MAIN.some(p=>d.status[p]!=="live"));
   }
 
-  // A project tab is a worklist: everything still to do for this one project,
-  // baseline list first. Grouping beats one long sorted run — the user needs to
-  // see "these 8 are the guaranteed ones" without reading DR numbers.
-  const live=all.filter(d=>d.status[cur]==="live");
-  const list=all.filter(d=>view==="all"?true
-    :view==="done"?d.status[cur]==="live"
-    :d.status[cur]!=="live");
-  const pct=all.length?Math.round(live.length/all.length*100):0;
-  $("bar").style.width=pct+"%";
-  const todo=all.filter(d=>!d.status[cur]).length;
-  $("count").textContent=\`\${cur} — ✅ live \${live.length} / \${all.length}（\${pct}%）｜👉 现在能发 \${todo}｜其余卡住或审核中\`;
+  // --- Level 2: project ---
+  const one=proj!==ALLPROJ;
+  const scoped=one?[proj]:MAIN;
+  const isDone=d=>scoped.every(p=>d.status[p]==="live");
+  const need=d=>scoped.filter(p=>d.status[p]!=="live");
 
-  const GROUPS=[["dofollow",CORELABEL.dofollow],
-    ["nofollow",CORELABEL.nofollow],["",\`其他（未核实 follow 状态，机会型）\`],
-    ["noindex",CORELABEL.noindex]];
+  // Progress counts slots (domain × project), and only dofollow ones — padding
+  // the denominator with nofollow targets overstates real coverage.
+  const scored=pool.filter(d=>scope!==CORE||d.follow==="dofollow");
+  const total=scored.length*scoped.length;
+  const live=scored.reduce((n,d)=>n+scoped.filter(p=>d.status[p]==="live").length,0);
+  $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
+  const extra=pool.length-scored.length;
+  const who=one?proj:\`\${scoped.length} 个项目\`;
+  $("count").textContent=\`\${scope===CORE?"🏆 保底名单":scope===GAP?"🎯 补齐缺口":"📋 全部域名"}\`
+    +\` · \${who} — \${scored.length} 个域名\${one?"":\` × \${scoped.length}\`} = \${total} 个位置\`
+    +\`｜✅ 已发 \${live}｜还差 \${total-live}\`
+    +(extra?\`（另有 \${extra} 个 nofollow，顺手做，不计进度）\`:"")
+    +(scope===CORE?"。准入 = 自己在页面上验过 rel 和 robots 都过关。🔎 徽章 = Google 也报过。":"");
+
+  // --- Level 3: 待发 / 已发 / 全部 ---
+  const list=pool.filter(d=>view==="all"||(view==="done"?isDone(d):!isDone(d)));
+
+  const GROUPS=scope===CORE?[["dofollow",CORELABEL.dofollow],["nofollow",CORELABEL.nofollow]]
+    :[["dofollow",CORELABEL.dofollow],["nofollow",CORELABEL.nofollow],
+      ["","其他（未核实 follow 状态，机会型）"],["noindex",CORELABEL.noindex]];
   $("list").innerHTML=GROUPS.map(([k,label])=>{
     const g=list.filter(d=>(d.follow||"")===k);
     if(!g.length) return "";
-    // Actionable (never attempted) first, then blocked; DR as the tiebreak.
-    g.sort((a,b)=>(!!a.status[cur]-!!b.status[cur])||b.tier-a.tier||(b.dr??-1)-(a.dr??-1));
-    return \`<h2 class="grp">\${label}<span>\${g.length}</span></h2>\`+g.map(d=>card(d)).join("");
-  }).join("")||'<div class="empty">没有匹配项。</div>';
-}
-
-// The baseline list: every core domain × every project is a slot that *must* be
-// filled. This is the checklist a brand-new project gets run through end to end.
-function renderCore(q){
-  // Admission = what we verified on the page ourselves: the anchor passes value
-  // (dofollow, or nofollow for referral) AND the page is indexable (robots
-  // checked, not noindex). GSC confirmation is a bonus badge, NOT the gate -
-  // gating on it required a domain to already be placed *and* reported, so no
-  // new target could ever enter, which defeats the point of a list you hand a
-  // brand-new project. Absence from GSC is absence of evidence, not evidence of
-  // absence: wox.cc has 3 links in Semrush and zero GSC rows.
-  const WORTH=["dofollow","nofollow"];
-  const core=DATA.filter(d=>WORTH.includes(d.follow)&&d.robotsChecked)
-    .filter(d=>!q||d.website.toLowerCase().includes(q)||d.note.toLowerCase().includes(q));
-  // Progress is measured on dofollow only. nofollow targets stay listed as
-  // "顺手做" but padding the denominator with them overstates the real coverage.
-  const good=core.filter(d=>d.follow==="dofollow");
-  // Level 2: which project are we asking about. "全部项目" keeps the old
-  // cross-project totals; picking one turns the list into that project's worklist.
-  const proj=$("coreproj").value;
-  const one=proj!==ALLPROJ;
-  // Level 3: 待发 / 已发 / 全部. For a single project "已发" means that project
-  // has a live link; across all projects it means every project does.
-  const isDone=d=>one?d.status[proj]==="live":MAIN.every(p=>d.status[p]==="live");
-  const keep=d=>view==="all"||(view==="done"?isDone(d):!isDone(d));
-
-  const total=one?good.length:good.length*MAIN.length;
-  const live=one?good.filter(d=>d.status[proj]==="live").length
-    :good.reduce((n,d)=>n+MAIN.filter(p=>d.status[p]==="live").length,0);
-  $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
-  const extra=core.length-good.length;
-  $("count").textContent=(one
-      ?\`\${proj}：保底名单 \${good.length} 个 dofollow 域名｜✅ 已发 \${live}｜还差 \${total-live}\`
-      :\`保底名单 \${good.length} 个 dofollow 域名 × \${MAIN.length} 个项目 = \${total} 个位置｜✅ 已发 \${live}｜还差 \${total-live}\`)
-    +(extra?\`（另有 \${extra} 个 nofollow，顺手做，不计进度）\`:"")
-    +\`。准入 = 自己在页面上验过 rel 和 robots 都过关。🔎 徽章 = Google 也报过。\`;
-  $("list").innerHTML=["dofollow","nofollow"].map(t=>{
-    const g=core.filter(d=>d.follow===t&&keep(d));
-    if(!g.length) return "";
-    // Within a project worklist, never-attempted rows come before blocked ones.
-    g.sort((a,b)=>(one?(!!a.status[proj]-!!b.status[proj]):0)||(b.dr??-1)-(a.dr??-1));
-    return \`<h2 class="grp">\${CORELABEL[t]}<span>\${g.length}</span></h2>\`
-      +g.map(d=>card(d,(one?[proj]:MAIN).filter(p=>d.status[p]!=="live"))).join("");
+    // Actionable (never attempted) before blocked (parked/reviewing); DR breaks ties.
+    const open=d=>need(d).filter(p=>!d.status[p]).length;
+    g.sort((a,b)=>open(b)-open(a)||b.tier-a.tier||(b.dr??-1)-(a.dr??-1));
+    return \`<h2 class="grp">\${label}<span>\${g.length}</span></h2>\`
+      +g.map(d=>card(d,need(d))).join("");
   }).join("")||\`<div class="empty">\${view==="todo"?"这一档已经全部发完了 🎉":"没有匹配项。"}</div>\`;
 }
 
@@ -283,10 +252,7 @@ const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unve
 
 // Which project a card is "about". A project tab sets it directly; the baseline
 // view sets it via its own picker. GAP and 全部项目 have no single subject.
-function lens(){
-  if(cur===CORE){const p=$("coreproj").value;return p===ALLPROJ?null:p;}
-  return cur===GAP?null:cur;
-}
+function lens(){return proj===ALLPROJ?null:proj;}
 
 function card(d,need){
   const f=lens();
