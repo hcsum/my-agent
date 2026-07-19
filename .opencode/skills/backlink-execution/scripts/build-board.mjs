@@ -12,7 +12,7 @@ const repo = resolve(here, "../../../..");
 const CSV = resolve(repo, "notes/projects/backlink-master.csv");
 const OUT = resolve(repo, "notes/projects/backlink-board.html");
 
-const META = ["website", "difficulty", "AS", "DR", "note", "example_source"];
+const META = ["website", "difficulty", "follow", "AS", "DR", "note", "example_source"];
 
 function parseCsv(text) {
   const rows = [];
@@ -49,6 +49,9 @@ const records = raw.slice(1)
 const data = records.map((r) => ({
   website: r.website,
   difficulty: r.difficulty || "",
+  // The one axis DR/AS can't express: does the link actually pass anything.
+  // dofollow > nofollow (still worth referral + profile diversity) > noindex (worthless).
+  follow: r.follow || "",
   dr: r.DR ? Number(r.DR) : null,
   note: r.note || "",
   status: Object.fromEntries(projects.map((p) => [p, r[p] || ""])),
@@ -102,6 +105,10 @@ select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background
 .need a{font-size:12px;padding:2px 9px;border-radius:99px;border:1px dashed var(--acc);color:var(--acc);text-decoration:none}
 .need a:hover{background:var(--acc);color:#fff;border-style:solid}
 .tier{font-size:11px;color:var(--ok);font-weight:600}
+.tab.core[aria-selected=true]{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+h2.grp{margin:14px 0 2px;font-size:13px;font-weight:650;color:var(--muted);display:flex;gap:8px;align-items:center}
+h2.grp:first-child{margin-top:0}
+h2.grp span{font-weight:400;font-size:12px;opacity:.7}
 </style></head><body>
 <header>
   <h1>Backlink Board</h1>
@@ -111,10 +118,10 @@ select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background
     <select id="tier">
       <option value="2">✅ 已验证（≥2 个项目发成功过）</option>
       <option value="1">🟡 用过一次（≥1 个项目）</option>
-      <option value="0">全部（含从未发过的）</option>
+      <option value="0" selected>全部（含从未发过的）</option>
     </select>
     <label class="chk"><input type="checkbox" id="showDone"> 显示已完成</label>
-    <label class="chk"><input type="checkbox" id="easyOnly" checked> 只看 easy</label>
+    <label class="chk"><input type="checkbox" id="easyOnly"> 只看 easy</label>
   </div>
   <div class="prog"><i id="bar"></i></div>
   <div class="count" id="count"></div>
@@ -124,14 +131,21 @@ select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background
 const DATA=${JSON.stringify(data)};
 const PROJECTS=${JSON.stringify(projects)};
 const MAIN=${JSON.stringify(mainProjects)};
-const GAP="__gap__";
-let cur=GAP;
+const GAP="__gap__",CORE="__core__";
+const CORELABEL={dofollow:"✅ dofollow（按 DR 从高到低）",nofollow:"🟡 nofollow — 页面有被索引，顺手做，别排前面",noindex:"❌ 整页 noindex — 不传权重也没引荐流量"};
+let cur=CORE;
 const $=(id)=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-$("tabs").innerHTML=\`<button class="tab gap" data-p="\${GAP}">🎯 补齐缺口</button>\`
+$("tabs").innerHTML=\`<button class="tab core" data-p="\${CORE}">🏆 保底名单</button>\`
+  +\`<button class="tab gap" data-p="\${GAP}">🎯 补齐缺口</button>\`
   +PROJECTS.map(p=>\`<button class="tab" data-p="\${p}">\${p}</button>\`).join("");
-$("tabs").onclick=e=>{const p=e.target.dataset.p;if(p){cur=p;render();}};
+$("tabs").onclick=e=>{const p=e.target.dataset.p;if(!p)return;cur=p;
+  // Per-tab filter defaults. The gap view is explicitly about *proven* domains;
+  // a project tab is a worklist and must never hide work behind a filter.
+  $("tier").value=p===GAP?"2":"0";
+  $("easyOnly").checked=p===GAP;
+  render();};
 ["q","showDone","easyOnly","tier"].forEach(id=>$(id).addEventListener("input",render));
 
 function render(){
@@ -139,7 +153,12 @@ function render(){
   const q=$("q").value.toLowerCase().trim();
   const minTier=+$("tier").value;
   const easyOnly=$("easyOnly").checked;
-  $("showDone").parentElement.style.display=cur===GAP?"none":"";
+  $("showDone").parentElement.style.display=cur===GAP||cur===CORE?"none":"";
+  // The baseline list is a fixed, hand-vetted set — the generic filters would
+  // silently shrink it, which is exactly the "list I can't trust" problem.
+  for(const id of ["tier","easyOnly"]) $(id).parentElement.style.display=cur===CORE?"none":"";
+
+  if(cur===CORE) return renderCore(q);
 
   let all=DATA.filter(d=>d.tier>=minTier)
     .filter(d=>!q||d.website.toLowerCase().includes(q)||d.note.toLowerCase().includes(q));
@@ -161,13 +180,46 @@ function render(){
     return;
   }
 
-  const done=all.filter(d=>d.status[cur]);
-  const list=all.filter(d=>$("showDone").checked||!d.status[cur])
-    .sort((a,b)=>(!!a.status[cur]-!!b.status[cur])||b.tier-a.tier||(b.dr??-1)-(a.dr??-1));
-  const pct=all.length?Math.round(done.length/all.length*100):0;
+  // A project tab is a worklist: everything still to do for this one project,
+  // baseline list first. Grouping beats one long sorted run — the user needs to
+  // see "these 8 are the guaranteed ones" without reading DR numbers.
+  const live=all.filter(d=>d.status[cur]==="live");
+  const list=all.filter(d=>$("showDone").checked||d.status[cur]!=="live");
+  const pct=all.length?Math.round(live.length/all.length*100):0;
   $("bar").style.width=pct+"%";
-  $("count").textContent=\`\${cur} — 已发 \${done.length} / \${all.length}（\${pct}%），待办 \${list.filter(d=>!d.status[cur]).length}\`;
-  $("list").innerHTML=list.length?list.map(d=>card(d)).join(""):'<div class="empty">没有匹配项。</div>';
+  const todo=list.filter(d=>!d.status[cur]).length;
+  $("count").textContent=\`\${cur} — ✅ live \${live.length} / \${all.length}（\${pct}%）｜👉 现在能发 \${todo}｜其余卡住或审核中\`;
+
+  const GROUPS=[["dofollow",CORELABEL.dofollow],
+    ["nofollow",CORELABEL.nofollow],["",\`其他（未核实 follow 状态，机会型）\`],
+    ["noindex",CORELABEL.noindex]];
+  $("list").innerHTML=GROUPS.map(([k,label])=>{
+    const g=list.filter(d=>(d.follow||"")===k);
+    if(!g.length) return "";
+    // Actionable (never attempted) first, then blocked; DR as the tiebreak.
+    g.sort((a,b)=>(!!a.status[cur]-!!b.status[cur])||b.tier-a.tier||(b.dr??-1)-(a.dr??-1));
+    return \`<h2 class="grp">\${label}<span>\${g.length}</span></h2>\`+g.map(d=>card(d)).join("");
+  }).join("")||'<div class="empty">没有匹配项。</div>';
+}
+
+// The baseline list: every core domain × every project is a slot that *must* be
+// filled. This is the checklist a brand-new project gets run through end to end.
+function renderCore(q){
+  const WORTH=["dofollow","nofollow"];
+  const core=DATA.filter(d=>d.follow)
+    .filter(d=>!q||d.website.toLowerCase().includes(q)||d.note.toLowerCase().includes(q));
+  const good=core.filter(d=>WORTH.includes(d.follow));
+  const total=good.length*MAIN.length;
+  const live=good.reduce((n,d)=>n+MAIN.filter(p=>d.status[p]==="live").length,0);
+  $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
+  $("count").textContent=\`保底名单 \${good.length} 个域名 × \${MAIN.length} 个项目 = \${total} 个位置｜✅ 已发 \${live}｜还差 \${total-live}。dofollow 优先，nofollow 顺手做。新站上线照这张表跑一遍。\`;
+  $("list").innerHTML=["dofollow","nofollow","noindex"].map(t=>{
+    const g=core.filter(d=>d.follow===t);
+    if(!g.length) return "";
+    g.sort((a,b)=>(b.dr??-1)-(a.dr??-1));
+    return \`<h2 class="grp">\${CORELABEL[t]}<span>\${g.length}</span></h2>\`
+      +g.map(d=>card(d,MAIN.filter(p=>d.status[p]!=="live"))).join("");
+  }).join("")||'<div class="empty">没有匹配项。</div>';
 }
 
 const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unverified:"❓ 待核实",nolink:"⚠️ 发了但没链接"};

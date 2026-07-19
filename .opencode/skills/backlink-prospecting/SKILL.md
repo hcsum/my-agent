@@ -56,6 +56,8 @@ A competitor export dominated by the above means few real targets — that is ex
 
 When unsure, default to `hard`. Difficulty rates effort, not link quality — do not downgrade a keeper because the link is nofollow or off-topic.
 
+**Free-blog farms are a value-gate rejection, not an `easy` keeper.** Sites handing out a free subdomain behind a SecureImg/KeyCAPTCHA-style signup (`*blog.com`, `*blogs.com` clusters sharing one WordPress stack) look like ideal `easy` targets and are the single worst use of time in this pipeline: a 2026-07-19 audit found nine of them banned or wiped at once, destroying ~18 recorded placements. Drop them at triage. One shared stack across several domains is the tell — check `note` on any sibling already in the master file.
+
 `dead` is a third value you never assign but must respect: it marks a site already tried and ruled out (no link surface, or the user judged it not worth the money). Dedup keeps those rows out of new candidate lists — that is the whole reason rejected sites stay in `backlink-master.csv` instead of being deleted. Never resurrect a `dead` row into a candidates file.
 
 ## Handoff To Execution
@@ -67,7 +69,7 @@ When unsure, default to `hard`. Difficulty rates effort, not link quality — do
 ## Promote Keepers
 
 - Triage row by row in `backlink-candidates-<competitor>.csv`: delete worthless rows (value gate), then set `difficulty` (`easy` / `hard`) on the rest.
-- Promote only the keepers into `backlink-master.csv` so future runs dedup correctly. Each project there owns a **status + `_detail` column pair**; leave both empty on a newly promoted row — `backlink-execution` fills them.
+- Promote only the keepers into `backlink-master.csv` so future runs dedup correctly. Each project there owns a **status + `_detail` column pair**; leave both empty on a newly promoted row — `backlink-execution` fills them. Also leave `follow` empty: it records an observed `rel` on a live page, so it can only be filled after execution, never guessed at triage.
 - After promoting, regenerate the user's view: `node .opencode/skills/backlink-execution/scripts/build-board.mjs`.
 - Re-running the script is safe; it preserves prior `difficulty` decisions already written in the candidates file (and migrates a legacy `doable` column).
 

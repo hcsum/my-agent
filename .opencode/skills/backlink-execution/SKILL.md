@@ -33,7 +33,51 @@ notes/projects/backlink-board.html          ← what the user actually opens
 
 The board bakes the CSV in as a JSON literal, so **it does not update on its own**. Regenerate it at the end of every run that touched the CSV, and tell the user it is refreshed. A stale board is worse than no board — it is what caused the user to distrust this list in the first place.
 
-The board's default view is **🎯 补齐缺口**: domains already proven `live` on ≥2 projects, showing which projects still have no live link. That ranking only works if statuses are accurate, which is why the write-back rules below are strict.
+The board's default view is **🏆 保底名单** — see below. The second tab, **🎯 补齐缺口**, is the wider opportunistic view: domains proven `live` on ≥2 projects, showing which projects still have no live link. That ranking only works if statuses are accurate, which is why the write-back rules below are strict.
+
+## The Baseline List (`follow`)
+
+The `follow` column marks the small, hand-vetted set of targets worth placing on **every** project, present and future. It exists because raw count is worthless: a 2026-07-19 audit found a whole free-blog farm (`blogsmine`, `activoblog`, `azzablog`, and six siblings) had been banned or wiped, taking ~18 "placements" with it. The user's rule: **10–20 targets that genuinely hold, rather than a long list that rots.**
+
+The column carries **only** what `AS` / `DR` cannot already express — whether the link passes anything. Do not reintroduce a quality/priority grade on top of it; authority is `DR`, effort is `difficulty`, and ranking is just `follow` then `DR` descending.
+
+| `follow` | meaning |
+|---|---|
+| `dofollow` | anchor has no `nofollow`/`sponsored`/`ugc`, page is indexable. The real targets. |
+| `nofollow` | anchor is nofollow but **the page is indexed** — still worth referral traffic, discovery, and link-profile diversity (an all-dofollow profile is itself unnatural). Do the cheap ones; never ahead of dofollow. |
+| `noindex` | page-level `noindex`: no PageRank *and* no referral traffic, since nobody can find the page. Usually a free-tier limit sold as a paid upgrade (`linktr.ee`, `jimdofree.com`). |
+| *(empty)* | follow status never verified. Usable opportunistically, not part of the guarantee. |
+
+**Only two outcomes are genuinely worthless: `noindex`, and getting banned.** Everything else carries some value, so nofollow is a *priority* signal, never a rejection — do not mark a working nofollow target `dead`. Reserve `dead` for no link surface at all, a paid wall, a ban-prone network, or a user veto.
+
+Useful prior: **WordPress stamps `rel="ugc external nofollow"` on comment-author links by default**, so blog-comment placements are nearly always `nofollow` regardless of how authoritative the host — a `.edu` comment link is still nofollow. Non-WordPress boards (Japanese open BBS/diary CGI, older forum software) are where comment surfaces still come out dofollow.
+
+To qualify as `dofollow`, a target must meet **all** of:
+
+1. **dofollow *and* indexable** — both verified, with the date. Two independent kill switches, and the second one is easy to miss:
+   - the anchor's own `rel` (`nofollow` / `sponsored` / `ugc` kill it; `noopener` / `noreferrer` are harmless security attributes and do **not**);
+   - the **page-level** `<meta name="robots">`. A `noindex` or `nofollow` there overrides every anchor on the page. Free tiers of hosted platforms routinely ship `noindex, nofollow` and sell indexing as a paid feature — `linktr.ee` and `jimdofree.com` (DR92!) both did exactly this, and both looked like perfect targets until the meta tag was checked on 2026-07-19.
+
+   **Verify both in a real browser via `web-access`, not with `curl`.** Load the page, then read the robots meta and every anchor's `rel` in one `/eval`:
+   ```js
+   (()=>{const r=document.querySelector("meta[name=robots i]");
+   const doms=["<target domain>","<legacy/redirect domain>"];
+   const hits=[...document.querySelectorAll("a[href]")]
+     .filter(a=>doms.some(d=>a.href.includes(d)))
+     .map(a=>a.getAttribute("rel")||"DOFOLLOW");
+   return JSON.stringify({robots:r?r.content:"none",rels:[...new Set(hits)],n:hits.length})})()
+   ```
+   `curl` produces **false results in both directions** and cost a full audit cycle on 2026-07-19:
+   - WAF/Cloudflare returns a 403 challenge page whose own meta is `noindex,nofollow` — `whizolosophy.com`, `proofreadanywhere.com`, and `sites.williams.edu` all looked dead this way and were fine (Cloudflare needs ~10s to clear, so wait before reading the DOM);
+   - client-rendered listings (`startupfa.st`) show no links at all in raw HTML;
+   - and `curl` alone never reveals the anchor `rel`, which is where two "dofollow" notes turned out to be plain wrong.
+
+   Check the **actual placement URL**, not the site root — they differ (a Substack homepage and its posts carry different tags). No `robots` meta at all means indexable, which is fine. Include any **legacy domain that 301s to the project** in the match list (`declutterspace.net` → `declutteryourhome.net`), or a real link reads as missing.
+2. **Durable host** — a real company, institution, or platform. Any free-subdomain blog network with a captcha-farm signup flow is disqualified on sight; that is the exact footprint that just died.
+3. **Proven live at least once**, with a URL in `<project>_detail`.
+4. **Repeatable** — a new project can get the same placement without new payment or a one-off relationship.
+
+When a new project launches, running it through the whole baseline list is the default first action — that is what the list is for. When a baseline target turns out to be dead or banned, do not silently drop it: set `difficulty=dead`, clear `follow`, and say so, because the guarantee is only as good as its last audit.
 
 ## Before You Start
 
@@ -97,7 +141,12 @@ For `notes/projects/backlink-master.csv`, the per-project outcome goes in that p
 
 Adding a new project means adding two columns, `<project>` and `<project>_detail`; the board picks them up automatically with no code change.
 
-**Record link quality in `note`, always.** dofollow vs nofollow decides whether a placement is worth anything, and it goes stale — sites change their `rel` without warning. State the observed `rel`, the verification date, and who checked. A high-DR nofollow target (cal.com DR92 is the standing example) looks like the best row on the board while passing no PageRank; without this note the user keeps being drawn back to it.
+**Record link quality in `note`, always.** Whether a placement is worth anything comes down to two things, and both go stale — sites change their `rel` and their robots policy without warning. Record **both**, with the verification date and who checked:
+
+1. the anchor's observed `rel` — dofollow vs nofollow;
+2. the page's `<meta name="robots">` on the live placement URL — see the check in [The Baseline List](#the-baseline-list-follow).
+
+A high-DR target that fails either one (cal.com DR92 nofollow anchor; jimdofree.com DR92 `noindex, nofollow` page) looks like the best row on the board while passing no PageRank at all. Without this note the user keeps being drawn back to it.
 
 What to put in `note`, every time:
 
