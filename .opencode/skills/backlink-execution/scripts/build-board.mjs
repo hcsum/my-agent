@@ -182,7 +182,10 @@ function render(){
   // The baseline list is a fixed, hand-vetted set — the generic filters would
   // silently shrink it, which is exactly the "list I can't trust" problem.
   // The project picker is the opposite: it is the whole point of this view.
-  for(const id of ["tier","easyOnly"]) $(id).parentElement.style.display=cur===CORE?"none":"";
+  // NOT parentElement for #tier — it sits directly in .bar, so that hides the
+  // whole toolbar. Only #easyOnly needs its wrapping <label> hidden.
+  $("tier").style.display=cur===CORE?"none":"";
+  $("easyOnly").parentElement.style.display=cur===CORE?"none":"";
   $("coreproj").style.display=cur===CORE?"":"none";
 
   if(cur===CORE) return renderCore(q);
