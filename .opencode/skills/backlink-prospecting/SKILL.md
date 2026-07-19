@@ -23,9 +23,9 @@ npx tsx .opencode/skills/backlink-prospecting/scripts/competitor-candidates.ts <
 What it does:
 
 - reads the newest `<sub>*-backlinks.csv` plus matching `*refdomains*.csv` from `~/Downloads` and falls back to `notes`
-- drops every referring domain already present in `notes/projects/backlink-master.csv` using registrable-domain dedup
+- drops every referring domain already present in `notes/projects/site-backlinks/backlink-master.csv` using registrable-domain dedup
 - picks one representative live link per new domain, preferring dofollow and then higher page authority
-- writes `notes/projects/backlink-candidates-<competitor>.csv` sorted by `AS` descending
+- writes `notes/projects/site-backlinks/backlink-candidates-<competitor>.csv` sorted by `AS` descending
 - preserves any existing `difficulty` values if the candidates file already exists
 - auto-drops high-confidence junk (programmatic report/stat/share/listing pages, blatant PBN/SEO-spam) via a value gate and reports it as `dropped_junk`
 

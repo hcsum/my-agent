@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
-const CSV = resolve(repo, "notes/projects/backlink-master.csv");
+const CSV = resolve(repo, "notes/projects/site-backlinks/backlink-master.csv");
 const META = ["website", "difficulty", "AS", "DR", "note", "example_source"];
 
 function parseCsv(text) {

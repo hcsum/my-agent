@@ -23,12 +23,12 @@ Your effort goes to exactly three things. Everything else is a hand-off.
 
 ## The Board Is The User's View
 
-The user works from `notes/projects/backlink-board.html`, not from the raw CSV. The CSV stays the source of truth; the board is a generated read-only view of it.
+The user works from `notes/projects/site-backlinks/backlink-board.html`, not from the raw CSV. The CSV stays the source of truth; the board is a generated read-only view of it.
 
 ```
-notes/projects/backlink-master.csv          ← source of truth, you edit this
+notes/projects/site-backlinks/backlink-master.csv          ← source of truth, you edit this
   ↓  node .opencode/skills/backlink-execution/scripts/build-board.mjs [--open]
-notes/projects/backlink-board.html          ← what the user actually opens
+notes/projects/site-backlinks/backlink-board.html          ← what the user actually opens
 ```
 
 The board bakes the CSV in as a JSON literal, so **it does not update on its own**. Regenerate it at the end of every run that touched the CSV, and tell the user it is refreshed. A stale board is worse than no board — it is what caused the user to distrust this list in the first place.
@@ -81,7 +81,7 @@ When a new project launches, running it through the whole baseline list is the d
 
 ## Before You Start
 
-- Confirm which tracking file drives the run: usually `notes/projects/backlink-master.csv`, sometimes a project-specific candidates CSV.
+- Confirm which tracking file drives the run: usually `notes/projects/site-backlinks/backlink-master.csv`, sometimes a project-specific candidates CSV.
 - Read `notes/projects/my-projects.md` before filling forms so you use the right project URL, description, category, logo, and anchor direction.
 - Check the target row's `example_source` first. If it is present, inspect that example to understand how the backlink was actually obtained on that site before attempting your own placement.
 - If `example_source` is empty, first determine the site's real link path yourself: article body, comment author URL, profile, listing, forum signature, or something else. Do not jump straight into registration or submission before you know which surface can actually produce the backlink.
@@ -137,7 +137,7 @@ If the site is inaccessible, the submission path is dead, or the flow is clearly
 
 Update the tracking CSV after **each** target attempt — never batch it to the end of the run. One target = one write-back. The `note` column is the durable memory of the run: it is what makes the *next* attempt (a new project on the same site, or a re-visit of a blocker) cheap instead of a rediscovery.
 
-For `notes/projects/backlink-master.csv`, the per-project outcome goes in that project's **status + `_detail` pair** — see [Status: Two Separate Axes](#status-two-separate-axes). The `difficulty` column stays site-level (`easy` / `hard` / `dead`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
+For `notes/projects/site-backlinks/backlink-master.csv`, the per-project outcome goes in that project's **status + `_detail` pair** — see [Status: Two Separate Axes](#status-two-separate-axes). The `difficulty` column stays site-level (`easy` / `hard` / `dead`) and is never overwritten with a project's outcome. A site can be live for one project and still open for another.
 
 Adding a new project means adding two columns, `<project>` and `<project>_detail`; the board picks them up automatically with no code change.
 

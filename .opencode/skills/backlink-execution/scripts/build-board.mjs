@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
-const CSV = resolve(repo, "notes/projects/backlink-master.csv");
-const OUT = resolve(repo, "notes/projects/backlink-board.html");
+const CSV = resolve(repo, "notes/projects/site-backlinks/backlink-master.csv");
+const OUT = resolve(repo, "notes/projects/site-backlinks/backlink-board.html");
 
 const META = ["website", "difficulty", "follow", "gsc", "AS", "DR", "note", "example_source"];
 
@@ -224,12 +224,13 @@ function render(){
   const live=scored.reduce((n,d)=>n+scoped.filter(p=>d.status[p]==="live").length,0);
   $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
   const extra=pool.length-scored.length;
-  const who=one?proj:\`\${scoped.length} 个项目\`;
-  $("count").textContent=\`\${scope===CORE?"🏆 保底名单":scope===GAP?"🎯 补齐缺口":"📋 全部域名"}\`
-    +\` · \${who} — \${scored.length} 个域名\${one?"":\` × \${scoped.length}\`} = \${total} 个位置\`
-    +\`｜✅ 已发 \${live}｜还差 \${total-live}\`
-    +(extra?\`（另有 \${extra} 个 nofollow，顺手做，不计进度）\`:"")
-    +(scope===CORE?"。准入 = 自己在页面上验过 rel 和 robots 都过关。🔎 徽章 = Google 也报过。":"");
+  // Say how many domains, then how far each project has got. The slot arithmetic
+  // ("15 × 3 = 45 个位置") is noise - nobody acts on the product.
+  const done=p=>scored.filter(d=>d.status[p]==="live").length;
+  $("count").textContent=\`\${scope===CORE?"🏆 保底名单":scope===GAP?"🎯 补齐缺口":"📋 全部域名"} \${scored.length} 个域名\`
+    +(extra?\`（另有 \${extra} 个 nofollow，顺手做）\`:"")+"｜"
+    +(one?\`\${proj} 已发 \${live}，还差 \${scored.length-live}\`
+        :MAIN.map(p=>\`\${p.split(".")[0]} \${done(p)}\`).join(" · "));
 
   // --- Level 3: 待发 / 已发 / 全部 ---
   const list=pool.filter(d=>view==="all"||(view==="done"?isDone(d):!isDone(d)));
