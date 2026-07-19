@@ -73,6 +73,18 @@ To qualify as `dofollow`, a target must meet **all** of:
    - and `curl` alone never reveals the anchor `rel`, which is where two "dofollow" notes turned out to be plain wrong.
 
    Check the **actual placement URL**, not the site root — they differ (a Substack homepage and its posts carry different tags). No `robots` meta at all means indexable, which is fine. Include any **legacy domain that 301s to the project** in the match list (`declutterspace.net` → `declutteryourhome.net`), or a real link reads as missing.
+
+   **`follow` is a property of the page, not the site.** One site can serve different `rel` on different routes: `startupfa.st/startup/<slug>` (the current Dashboard flow) is dofollow while `startupfa.st/projects/<slug>` (the older route, where declutter and everland still live) is nofollow. Always record *which route* was verified in the `note`; a bare site-level "nofollow" wrote off a DR69 dofollow surface for weeks.
+
+### The `gsc` column
+
+`gsc` = the date Google Search Console itself reported a link from this domain, on any project. It is the only first-hand evidence that Google saw the link, and it outranks Semrush and `site:` — both gave wrong answers on 2026-07-19 where GSC did not.
+
+**But GSC confirmation is not a quality signal and must never be the baseline gate.** GSC reports who links to you; it does not filter by `rel` or `robots`. `f6s.com` is GSC-confirmed *and* `noindex` *and* `nofollow` — worthless on both axes. Admission to the baseline is `follow` + robots verified by us; `gsc` is a bonus badge on top.
+
+The inverse also holds: **absence from GSC is not evidence of absence.** GSC samples and lags — `wox.cc` has 3 links in a Semrush export and zero GSC rows. Never demote a target for missing from GSC.
+
+Its real second use: **recovering placements that were never recorded.** A domain appearing in GSC that has no CSV row is almost always "placed but not written down", not an automatic listing — that is how `mossai.org` and `aigcsoft.site` were recovered.
 2. **Durable host** — a real company, institution, or platform. Any free-subdomain blog network with a captcha-farm signup flow is disqualified on sight; that is the exact footprint that just died.
 3. **Proven live at least once**, with a URL in `<project>_detail`.
 4. **Repeatable** — a new project can get the same placement without new payment or a one-off relationship.
