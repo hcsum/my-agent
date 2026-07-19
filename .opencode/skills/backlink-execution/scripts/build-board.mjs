@@ -12,7 +12,7 @@ const repo = resolve(here, "../../../..");
 const CSV = resolve(repo, "notes/projects/backlink-master.csv");
 const OUT = resolve(repo, "notes/projects/backlink-board.html");
 
-const META = ["website", "difficulty", "follow", "AS", "DR", "note", "example_source"];
+const META = ["website", "difficulty", "follow", "gsc", "AS", "DR", "note", "example_source"];
 
 function parseCsv(text) {
   const rows = [];
@@ -52,8 +52,17 @@ const data = records.map((r) => ({
   // The one axis DR/AS can't express: does the link actually pass anything.
   // dofollow > nofollow (still worth referral + profile diversity) > noindex (worthless).
   follow: r.follow || "",
+  // Date Google Search Console itself reported a link from this domain, on any
+  // project. The only first-hand evidence there is — Semrush and `site:` both
+  // gave wrong answers on 2026-07-19 where GSC did not. Outranks `follow`.
+  gsc: r.gsc || "",
   dr: r.DR ? Number(r.DR) : null,
   note: r.note || "",
+  // Baseline admission needs *both* kill switches checked, and `follow` only
+  // covers the anchor's rel. A page-level `<meta name="robots">` overrides every
+  // anchor on it — f6s.com is dofollow-looking, GSC-confirmed, and `noindex`.
+  // The note is where that check gets written down, so its presence is the flag.
+  robotsChecked: /robots/i.test(r.note || ""),
   status: Object.fromEntries(projects.map((p) => [p, r[p] || ""])),
   detail: Object.fromEntries(projects.map((p) => [p, r[`${p}_detail`] || ""])),
 }));
@@ -96,6 +105,8 @@ main{padding:16px 20px 64px;display:grid;gap:9px;max-width:920px}
 .tag{font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
 .tag.hard{color:var(--acc);border-color:var(--acc)}
 .tag.ok{color:var(--ok);border-color:var(--ok)}
+.tag.gsc{background:var(--ok);color:#fff;border-color:var(--ok)}
+.tag.mine{background:var(--acc);color:#fff;border-color:var(--acc);text-decoration:none;font-weight:600}
 .note{margin-top:7px;font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
 .note.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
 .empty{color:var(--muted);font-size:14px;padding:20px 0}
@@ -106,6 +117,10 @@ select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background
 .need a:hover{background:var(--acc);color:#fff;border-style:solid}
 .tier{font-size:11px;color:var(--ok);font-weight:600}
 .tab.core[aria-selected=true]{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:var(--card);color:var(--muted);padding:6px 12px;font-size:13px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--acc);color:#fff}
 h2.grp{margin:14px 0 2px;font-size:13px;font-weight:650;color:var(--muted);display:flex;gap:8px;align-items:center}
 h2.grp:first-child{margin-top:0}
 h2.grp span{font-weight:400;font-size:12px;opacity:.7}
@@ -115,12 +130,15 @@ h2.grp span{font-weight:400;font-size:12px;opacity:.7}
   <div class="tabs" id="tabs"></div>
   <div class="bar">
     <input type="search" id="q" placeholder="搜索域名 / note…">
+    <select id="coreproj"></select>
     <select id="tier">
       <option value="2">✅ 已验证（≥2 个项目发成功过）</option>
       <option value="1">🟡 用过一次（≥1 个项目）</option>
       <option value="0" selected>全部（含从未发过的）</option>
     </select>
-    <label class="chk"><input type="checkbox" id="showDone"> 显示已完成</label>
+    <span class="seg" id="seg">
+      <button data-v="todo" class="on">待发</button><button data-v="done">已发</button><button data-v="all">全部</button>
+    </span>
     <label class="chk"><input type="checkbox" id="easyOnly"> 只看 easy</label>
   </div>
   <div class="prog"><i id="bar"></i></div>
@@ -132,8 +150,10 @@ const DATA=${JSON.stringify(data)};
 const PROJECTS=${JSON.stringify(projects)};
 const MAIN=${JSON.stringify(mainProjects)};
 const GAP="__gap__",CORE="__core__";
-const CORELABEL={dofollow:"✅ dofollow（按 DR 从高到低）",nofollow:"🟡 nofollow — 页面有被索引，顺手做，别排前面",noindex:"❌ 整页 noindex — 不传权重也没引荐流量"};
+const CORELABEL={dofollow:"✅ dofollow + 可索引 — 主力，按 DR 从高到低",nofollow:"🟡 nofollow — 页面能被索引，有引荐流量，顺手做别排前面",noindex:"❌ 整页 noindex — 不传权重也没引荐流量","":"⬜ rel 未核实 — 去页面上看一眼补上"};
 let cur=CORE;
+// Baseline view drills down in three levels: 保底名单 → 项目 → 已发/未发/全部.
+const ALLPROJ="__allproj__";
 const $=(id)=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -146,17 +166,24 @@ $("tabs").onclick=e=>{const p=e.target.dataset.p;if(!p)return;cur=p;
   $("tier").value=p===GAP?"2":"0";
   $("easyOnly").checked=p===GAP;
   render();};
-["q","showDone","easyOnly","tier"].forEach(id=>$(id).addEventListener("input",render));
+$("coreproj").innerHTML=\`<option value="\${ALLPROJ}">全部项目</option>\`
+  +MAIN.map(p=>\`<option value="\${p}">\${p}</option>\`).join("");
+["q","easyOnly","tier","coreproj"].forEach(id=>$(id).addEventListener("input",render));
+let view="todo";
+$("seg").onclick=e=>{const v=e.target.dataset.v;if(!v)return;view=v;
+  [...$("seg").children].forEach(b=>b.classList.toggle("on",b.dataset.v===v));render();};
 
 function render(){
   [...$("tabs").children].forEach(b=>b.setAttribute("aria-selected",b.dataset.p===cur));
   const q=$("q").value.toLowerCase().trim();
   const minTier=+$("tier").value;
   const easyOnly=$("easyOnly").checked;
-  $("showDone").parentElement.style.display=cur===GAP||cur===CORE?"none":"";
+  $("seg").style.display=cur===GAP?"none":"";
   // The baseline list is a fixed, hand-vetted set — the generic filters would
   // silently shrink it, which is exactly the "list I can't trust" problem.
+  // The project picker is the opposite: it is the whole point of this view.
   for(const id of ["tier","easyOnly"]) $(id).parentElement.style.display=cur===CORE?"none":"";
+  $("coreproj").style.display=cur===CORE?"":"none";
 
   if(cur===CORE) return renderCore(q);
 
@@ -184,10 +211,12 @@ function render(){
   // baseline list first. Grouping beats one long sorted run — the user needs to
   // see "these 8 are the guaranteed ones" without reading DR numbers.
   const live=all.filter(d=>d.status[cur]==="live");
-  const list=all.filter(d=>$("showDone").checked||d.status[cur]!=="live");
+  const list=all.filter(d=>view==="all"?true
+    :view==="done"?d.status[cur]==="live"
+    :d.status[cur]!=="live");
   const pct=all.length?Math.round(live.length/all.length*100):0;
   $("bar").style.width=pct+"%";
-  const todo=list.filter(d=>!d.status[cur]).length;
+  const todo=all.filter(d=>!d.status[cur]).length;
   $("count").textContent=\`\${cur} — ✅ live \${live.length} / \${all.length}（\${pct}%）｜👉 现在能发 \${todo}｜其余卡住或审核中\`;
 
   const GROUPS=[["dofollow",CORELABEL.dofollow],
@@ -205,42 +234,80 @@ function render(){
 // The baseline list: every core domain × every project is a slot that *must* be
 // filled. This is the checklist a brand-new project gets run through end to end.
 function renderCore(q){
+  // Admission = what we verified on the page ourselves: the anchor passes value
+  // (dofollow, or nofollow for referral) AND the page is indexable (robots
+  // checked, not noindex). GSC confirmation is a bonus badge, NOT the gate -
+  // gating on it required a domain to already be placed *and* reported, so no
+  // new target could ever enter, which defeats the point of a list you hand a
+  // brand-new project. Absence from GSC is absence of evidence, not evidence of
+  // absence: wox.cc has 3 links in Semrush and zero GSC rows.
   const WORTH=["dofollow","nofollow"];
-  const core=DATA.filter(d=>d.follow)
+  const core=DATA.filter(d=>WORTH.includes(d.follow)&&d.robotsChecked)
     .filter(d=>!q||d.website.toLowerCase().includes(q)||d.note.toLowerCase().includes(q));
-  const good=core.filter(d=>WORTH.includes(d.follow));
-  const total=good.length*MAIN.length;
-  const live=good.reduce((n,d)=>n+MAIN.filter(p=>d.status[p]==="live").length,0);
+  // Progress is measured on dofollow only. nofollow targets stay listed as
+  // "顺手做" but padding the denominator with them overstates the real coverage.
+  const good=core.filter(d=>d.follow==="dofollow");
+  // Level 2: which project are we asking about. "全部项目" keeps the old
+  // cross-project totals; picking one turns the list into that project's worklist.
+  const proj=$("coreproj").value;
+  const one=proj!==ALLPROJ;
+  // Level 3: 待发 / 已发 / 全部. For a single project "已发" means that project
+  // has a live link; across all projects it means every project does.
+  const isDone=d=>one?d.status[proj]==="live":MAIN.every(p=>d.status[p]==="live");
+  const keep=d=>view==="all"||(view==="done"?isDone(d):!isDone(d));
+
+  const total=one?good.length:good.length*MAIN.length;
+  const live=one?good.filter(d=>d.status[proj]==="live").length
+    :good.reduce((n,d)=>n+MAIN.filter(p=>d.status[p]==="live").length,0);
   $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
-  $("count").textContent=\`保底名单 \${good.length} 个域名 × \${MAIN.length} 个项目 = \${total} 个位置｜✅ 已发 \${live}｜还差 \${total-live}。dofollow 优先，nofollow 顺手做。新站上线照这张表跑一遍。\`;
-  $("list").innerHTML=["dofollow","nofollow","noindex"].map(t=>{
-    const g=core.filter(d=>d.follow===t);
+  const extra=core.length-good.length;
+  $("count").textContent=(one
+      ?\`\${proj}：保底名单 \${good.length} 个 dofollow 域名｜✅ 已发 \${live}｜还差 \${total-live}\`
+      :\`保底名单 \${good.length} 个 dofollow 域名 × \${MAIN.length} 个项目 = \${total} 个位置｜✅ 已发 \${live}｜还差 \${total-live}\`)
+    +(extra?\`（另有 \${extra} 个 nofollow，顺手做，不计进度）\`:"")
+    +\`。准入 = 自己在页面上验过 rel 和 robots 都过关。🔎 徽章 = Google 也报过。\`;
+  $("list").innerHTML=["dofollow","nofollow"].map(t=>{
+    const g=core.filter(d=>d.follow===t&&keep(d));
     if(!g.length) return "";
-    g.sort((a,b)=>(b.dr??-1)-(a.dr??-1));
+    // Within a project worklist, never-attempted rows come before blocked ones.
+    g.sort((a,b)=>(one?(!!a.status[proj]-!!b.status[proj]):0)||(b.dr??-1)-(a.dr??-1));
     return \`<h2 class="grp">\${CORELABEL[t]}<span>\${g.length}</span></h2>\`
-      +g.map(d=>card(d,MAIN.filter(p=>d.status[p]!=="live"))).join("");
-  }).join("")||'<div class="empty">没有匹配项。</div>';
+      +g.map(d=>card(d,(one?[proj]:MAIN).filter(p=>d.status[p]!=="live"))).join("");
+  }).join("")||\`<div class="empty">\${view==="todo"?"这一档已经全部发完了 🎉":"没有匹配项。"}</div>\`;
 }
 
 const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unverified:"❓ 待核实",nolink:"⚠️ 发了但没链接"};
 
+// Which project a card is "about". A project tab sets it directly; the baseline
+// view sets it via its own picker. GAP and 全部项目 have no single subject.
+function lens(){
+  if(cur===CORE){const p=$("coreproj").value;return p===ALLPROJ?null:p;}
+  return cur===GAP?null:cur;
+}
+
 function card(d,need){
-  const st=cur===GAP?"":d.status[cur];
+  const f=lens();
+  const st=f?d.status[f]:"";
   // Live links on other projects double as the how-to reference for this domain.
-  const evidence=PROJECTS.filter(p=>p!==cur&&d.status[p]==="live"&&d.detail[p])
+  // The current project's own link must come first and be marked, otherwise the
+  // done view shows only *other* projects and reads as "mine is missing".
+  const self=st==="live"&&d.detail[f]
+    ?\`<a class="tag mine" href="\${esc(d.detail[f])}" target="_blank" rel="noopener">\${esc(f.split("/")[0])} ↗ 本项目</a>\`:"";
+  const evidence=self+" "+PROJECTS.filter(p=>p!==f&&d.status[p]==="live"&&d.detail[p])
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
-  const link=st==="live"&&d.detail[cur]?d.detail[cur]:"https://"+d.website;
-  const why=st&&st!=="live"&&d.detail[cur]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[cur])}</div>\`:"";
-  return \`<div class="row \${st==="live"?"done":""}">
+  const link=st==="live"&&d.detail[f]?d.detail[f]:"https://"+d.website;
+  const why=st&&st!=="live"&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
+  return \`<div class="row \${st==="live"&&view!=="done"?"done":""}">
     <div class="top">
       <a class="site" href="\${esc(link)}" target="_blank" rel="noopener">\${esc(d.website)}</a>
+      \${d.gsc?\`<span class="tag gsc" title="Google Search Console 自己报告过来自这个域名的链接（\${esc(d.gsc)}）">🔎 GSC 确认</span>\`:""}
       \${d.dr!=null?\`<span class="dr">DR \${d.dr}</span>\`:""}
       \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 live 1×</span>':""}
       \${d.difficulty==="hard"?'<span class="tag hard">hard</span>':""}
       \${st?\`<span class="tag \${st==="live"?"ok":st==="parked"?"hard":""}">\${LABEL[st]||st}</span>\`:""}
       \${evidence}
     </div>
-    \${need?\`<div class="need">还差：\${need.map(p=>{
+    \${need&&need.length?\`<div class="need">还差：\${need.map(p=>{
       const s=d.status[p];
       return s?\`<span class="tag \${s==="parked"?"hard":""}">\${esc(p.split("/")[0])} \${LABEL[s]||s}</span>\`
               :\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`;
