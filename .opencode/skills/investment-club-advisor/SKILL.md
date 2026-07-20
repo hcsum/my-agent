@@ -22,8 +22,10 @@ Turn a 韭俱乐部 report into two things the user can act on: a faithful **解
 
 ## Step 2 — 解读 depth by report type
 
-- **Weekly (周报):** produce the full 解读 and save it to `notes/my-files/investment-club/周报-MMDD-解读.md`. Follow the structure in `references/templates.md`. **Do not compress the two most operational parts**: the full event calendar (every dated event, names/acronyms expanded) and the 模拟组合 four-tier picks (every 板块 in both accounts with its annotation) + the 6 usage notes. Past failure mode was collapsing these to one line — don't.
-- **Daily (早报/晚报/盘中):** lighter. Write a delta against the standing weekly framework — what changed in 节奏/资金/板块强弱, which 右侧抱团 板块 were added or dropped. Club rule: when a daily contradicts the latest weekly, **以日报为准**. Save only if it carries real new signal; otherwise fold it straight into the advice.
+**HARD RULE — 解读 is line-by-line / paragraph-by-paragraph, NEVER a broad summary.** Walk the report in its own order and decode *every* substantive sentence: not just the headline number but what it *implies* (e.g. 上证50 +3% >> 上证 +0.85% = 权重护盘不是普涨; 北水净流出 but 港股大涨 = 外资修复不是 A 股联动; 韩国外资净买入 = 聪明钱承接去杠杆尾声). Surface the specific, non-generic reads — that is the whole value. Past failure mode (2026-07-20, user called it out): skipping report prose and jumping straight to generic advice, so every report read the same. If you find yourself compressing a paragraph to "情绪修复" or "分化" without unpacking the mechanism, you are being lazy — go back and decode it.
+
+- **Weekly (周报):** full 解读 saved to `notes/my-files/investment-club/周报-MMDD-解读.md`, structure per `references/templates.md`. **Never compress** the event calendar (every dated event, names/acronyms expanded) or the 模拟组合 four-tier picks (every 板块 in both accounts with its annotation) + the 6 usage notes.
+- **Daily (早报/晚报/盘中):** "lighter" means **only** that you don't re-list the full standing calendar / four-tier clean clists — it does **NOT** mean skipping the report's prose. Still decode the daily paragraph-by-paragraph (每一段：大A/港股/韩国/防守/进攻配置/进攻波段/进攻投机/底层逻辑/美股盘前/月线右侧清单/风险提示). Then, on top of the decode, write the delta against the standing weekly: what changed in 节奏/资金/板块强弱, which 右侧抱团 板块 were added or dropped. Club rule: when a daily contradicts the latest weekly, **以日报为准**. Save the decode+delta to a dated file whenever it carries real signal.
 
 ## Step 3 — 投资建议 (the deliverable the user wants)
 
@@ -35,6 +37,8 @@ Map the club's view onto his actual holdings and give concrete advice. Save to `
 4. **风险提示 / 执行原则** — invoke relevant 祖训 discipline (追高毁一生、卖飞永赚、心慌就减仓、遇事不决走一半) and the user's income-reality constraint. Always state the call is his.
 
 Give real advice — the user explicitly wants it. But ground every recommendation in either the report, the holdings, or the framework; flag uncertainty instead of false confidence.
+
+**HARD RULE — the advice section is a DIFF, not boilerplate.** The macro backdrop often doesn't change day to day (e.g. "gate 弹药到财报"), so re-stating the same standing calls (留弹药/不追/收敛三只/卖强不卖弱/QCOM 不动) every report makes the advice homogenize — the user called this out (2026-07-20). Before writing, read the most recent `YYYY-MM-DD-*建议.md` / `*delta.md` and write **only what changed relative to it**: the new signal from today's decode and its concrete implication for a specific holding. Standing calls that are unchanged get one line ("其余不变") or are omitted — never re-argued in full. If today's advice reads ~identical to the last file, the decode wasn't mined hard enough — go back to Step 2.
 
 ## Output & housekeeping
 
