@@ -42,12 +42,16 @@ const MAX_STALL_RECOVERY_ATTEMPTS = 1;
 
 export type PermissionResponse = "once" | "always" | "reject";
 
-// An image lifted from the inbound email body/attachments, encoded as a data
-// URL so it can be handed to the model as a file part without a second fetch.
+// An image lifted from the inbound email body/attachments. Transports should
+// stage bytes to localPath so Claude runs can summarize once and keep raw image
+// bytes out of the long agent transcript. `url` remains for providers that need
+// a file part data URI on first dispatch.
 export interface RunImageInput {
   mime: string;
   filename: string;
-  url: string;
+  url?: string;
+  localPath?: string;
+  size?: number;
 }
 
 export interface GmailRunRequest {
@@ -124,7 +128,10 @@ interface ActiveRun {
   meta: ThreadRunRecord;
   publicTask: PublicTaskContext;
   emittedStages: Set<
-    "research_started" | "web_data_started" | "draft_started" | "knowledge_update_started"
+    | "research_started"
+    | "web_data_started"
+    | "draft_started"
+    | "knowledge_update_started"
   >;
   loadedSkills: Set<string>;
   lastProgressSummary: string;
@@ -175,7 +182,10 @@ interface ObservedExternalSession {
 export class OpencodeRuntime {
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly sessionToThread = new Map<string, string>();
-  private readonly observedExternalSessions = new Map<string, ObservedExternalSession>();
+  private readonly observedExternalSessions = new Map<
+    string,
+    ObservedExternalSession
+  >();
   // Cache of `${providerID}/${modelID}` -> context window size, populated lazily
   // from config.providers() so the context-usage footer can show a percentage.
   private readonly modelContextLimits = new Map<string, number>();
@@ -200,8 +210,14 @@ export class OpencodeRuntime {
   async startRun(
     request: GmailRunRequest,
     callbacks: RuntimeCallbacks,
-  ): Promise<{ started: boolean; status: ThreadRunStatus; sessionId?: string }> {
-    const existing = this.activeRuns.get(request.threadId) || this.restoreActiveRun(request.threadId, callbacks);
+  ): Promise<{
+    started: boolean;
+    status: ThreadRunStatus;
+    sessionId?: string;
+  }> {
+    const existing =
+      this.activeRuns.get(request.threadId) ||
+      this.restoreActiveRun(request.threadId, callbacks);
     if (existing && isActiveStatus(existing.status)) {
       existing.callbacks = callbacks;
       return {
@@ -281,7 +297,11 @@ export class OpencodeRuntime {
       );
     } catch (error) {
       const active = this.activeRuns.get(run.threadId);
-      if (!active || active.sessionId !== run.sessionId || !isActiveStatus(active.status)) {
+      if (
+        !active ||
+        active.sessionId !== run.sessionId ||
+        !isActiveStatus(active.status)
+      ) {
         return;
       }
       console.error(
@@ -292,7 +312,10 @@ export class OpencodeRuntime {
     }
   }
 
-  async resumeRun(threadId: string, callbacks: RuntimeCallbacks): Promise<boolean> {
+  async resumeRun(
+    threadId: string,
+    callbacks: RuntimeCallbacks,
+  ): Promise<boolean> {
     const existing = this.activeRuns.get(threadId);
     if (existing) {
       existing.callbacks = callbacks;
@@ -376,7 +399,10 @@ export class OpencodeRuntime {
     return this.installRun(persisted, callbacks);
   }
 
-  private installRun(meta: ThreadRunRecord, callbacks: RuntimeCallbacks): ActiveRun {
+  private installRun(
+    meta: ThreadRunRecord,
+    callbacks: RuntimeCallbacks,
+  ): ActiveRun {
     const now = Date.now();
     const run: ActiveRun = {
       threadId: meta.threadId,
@@ -492,7 +518,9 @@ export class OpencodeRuntime {
 
   private async handleEvent(event: StreamEventPayload): Promise<void> {
     if (event.type === "permission.asked") {
-      await this.handlePermissionEvent(event.properties as unknown as PermissionRequest);
+      await this.handlePermissionEvent(
+        event.properties as unknown as PermissionRequest,
+      );
       return;
     }
 
@@ -536,7 +564,10 @@ export class OpencodeRuntime {
         }
         this.noteProgress(run, `Message part updated: ${props.part.type}.`);
       }
-      this.logProgressPart(run, props.part as unknown as ToolPartEvent | TextPartEvent);
+      this.logProgressPart(
+        run,
+        props.part as unknown as ToolPartEvent | TextPartEvent,
+      );
       if (!run) {
         this.observeExternalSessionActivity(props.sessionID);
         this.maybeEmitObservedToolStage(
@@ -559,14 +590,19 @@ export class OpencodeRuntime {
       if (!props.sessionID) return;
       const run = this.getRunForSession(props.sessionID);
       if (!run) {
-        this.failObservedExternalSession(props.sessionID, extractErrorMessage(props.error));
+        this.failObservedExternalSession(
+          props.sessionID,
+          extractErrorMessage(props.error),
+        );
         return;
       }
       await this.failRun(run.threadId, extractErrorMessage(props.error));
     }
   }
 
-  private async handlePermissionEvent(permission: PermissionRequest): Promise<void> {
+  private async handlePermissionEvent(
+    permission: PermissionRequest,
+  ): Promise<void> {
     const run = this.getRunForSession(permission.sessionID);
     if (!run) {
       this.observeExternalSessionWaiting(permission.sessionID, "permission");
@@ -578,7 +614,8 @@ export class OpencodeRuntime {
       threadId,
       sessionId: permission.sessionID,
       permissionId: permission.id,
-      messageId: permission.tool?.messageID || run.latestAssistantMessageId || "",
+      messageId:
+        permission.tool?.messageID || run.latestAssistantMessageId || "",
       title: buildPermissionTitle(permission),
       type: permission.permission,
       pattern: permission.patterns.join(", "),
@@ -587,7 +624,11 @@ export class OpencodeRuntime {
     upsertPendingPermission(request);
     this.noteProgress(run, `Permission requested: ${request.title}.`);
     this.updateRunState(run, "waiting_permission");
-    this.publicActivity.emit({ type: "task_waiting", task: run.publicTask, reason: "permission" });
+    this.publicActivity.emit({
+      type: "task_waiting",
+      task: run.publicTask,
+      reason: "permission",
+    });
     await run.callbacks.onPermission(request);
   }
 
@@ -629,16 +670,20 @@ export class OpencodeRuntime {
     upsertPendingQuestion(persisted);
     this.noteProgress(run, "Follow-up question requested.");
     this.updateRunState(run, "waiting_question");
-    this.publicActivity.emit({ type: "task_waiting", task: run.publicTask, reason: "question" });
+    this.publicActivity.emit({
+      type: "task_waiting",
+      task: run.publicTask,
+      reason: "question",
+    });
     await run.callbacks.onQuestion(request);
   }
 
   private async pollActiveRuns(): Promise<void> {
     if (this.activeRuns.size === 0) return;
 
-    const statusMap = await this.unwrap<Record<string, { type: string; attempt?: number }>>(
-      this.client.session.status(),
-    ).catch((error) => {
+    const statusMap = await this.unwrap<
+      Record<string, { type: string; attempt?: number }>
+    >(this.client.session.status()).catch((error) => {
       console.error("[opencode-runtime] status poll failed", error);
       return undefined;
     });
@@ -646,7 +691,10 @@ export class OpencodeRuntime {
     const now = Date.now();
     for (const run of this.activeRuns.values()) {
       // Skip timeout while waiting on the user — human approval routinely exceeds IDLE_TIMEOUT_MS.
-      if (run.status === "waiting_permission" || run.status === "waiting_question") {
+      if (
+        run.status === "waiting_permission" ||
+        run.status === "waiting_question"
+      ) {
         continue;
       }
 
@@ -679,7 +727,10 @@ export class OpencodeRuntime {
       }
 
       if (now - run.lastProgressAtMs > IDLE_TIMEOUT_MS) {
-        await this.failRun(run.threadId, buildIdleTimeoutMessage(run, sessionStatus));
+        await this.failRun(
+          run.threadId,
+          buildIdleTimeoutMessage(run, sessionStatus),
+        );
         continue;
       }
 
@@ -720,25 +771,45 @@ export class OpencodeRuntime {
 
     if (!messages) return false;
 
-    const latest = findLatestCompletedAssistantMessage(messages, run.startedAtMs);
+    const latest = findLatestCompletedAssistantMessage(
+      messages,
+      run.startedAtMs,
+    );
     if (latest) {
-      this.noteProgress(run, "Recovered terminal assistant message from message sync.");
+      this.noteProgress(
+        run,
+        "Recovered terminal assistant message from message sync.",
+      );
       this.trackAssistant(run, latest.info);
       this.clearPendingAssistantShell(run);
-      await this.completeRun(run, collectMessageText(latest.parts), latest.info.error, latest.info);
+      await this.completeRun(
+        run,
+        collectMessageText(latest.parts),
+        latest.info.error,
+        latest.info,
+      );
       return true;
     }
 
-    const latestAssistant = findLatestAssistantMessage(messages, run.startedAtMs);
+    const latestAssistant = findLatestAssistantMessage(
+      messages,
+      run.startedAtMs,
+    );
     if (latestAssistant) {
       const previousAssistantId = run.latestAssistantMessageId;
       this.trackAssistant(run, latestAssistant.info);
       this.trackAssistantShell(run, latestAssistant.info);
-      if (latestAssistant.parts.length > 0 && run.pendingAssistantShellMessageId === latestAssistant.info.id) {
+      if (
+        latestAssistant.parts.length > 0 &&
+        run.pendingAssistantShellMessageId === latestAssistant.info.id
+      ) {
         this.clearPendingAssistantShell(run);
       }
       if (latestAssistant.info.id !== previousAssistantId) {
-        this.noteProgress(run, "Recovered assistant progress from message sync.");
+        this.noteProgress(
+          run,
+          "Recovered assistant progress from message sync.",
+        );
       }
     }
 
@@ -759,7 +830,10 @@ export class OpencodeRuntime {
       run,
       `Recovered progress from message sync: ${latestPart.type}.`,
     );
-    this.logProgressPart(run, latestPart as unknown as ToolPartEvent | TextPartEvent);
+    this.logProgressPart(
+      run,
+      latestPart as unknown as ToolPartEvent | TextPartEvent,
+    );
     return false;
   }
 
@@ -773,12 +847,20 @@ export class OpencodeRuntime {
 
     if (!messages) return;
 
-    const latest = findLatestCompletedAssistantMessage(messages, run.startedAtMs);
+    const latest = findLatestCompletedAssistantMessage(
+      messages,
+      run.startedAtMs,
+    );
     if (!latest) return;
 
     this.noteProgress(run, "Terminal assistant message detected.");
     this.trackAssistant(run, latest.info);
-    await this.completeRun(run, collectMessageText(latest.parts), latest.info.error, latest.info);
+    await this.completeRun(
+      run,
+      collectMessageText(latest.parts),
+      latest.info.error,
+      latest.info,
+    );
   }
 
   private trackAssistant(run: ActiveRun, info: AssistantMessage): void {
@@ -886,14 +968,19 @@ export class OpencodeRuntime {
   // Render a one-line context-usage footer for the reply email from the terminal
   // assistant message's token counts. input + cache.read + cache.write + output is
   // everything that occupies the context window going into the next turn.
-  private async buildContextUsageFooter(info: AssistantMessage): Promise<string> {
+  private async buildContextUsageFooter(
+    info: AssistantMessage,
+  ): Promise<string> {
     const tokens = info.tokens;
     if (!tokens) return "";
     const used =
       tokens.input + tokens.output + tokens.cache.read + tokens.cache.write;
     if (used <= 0) return "";
 
-    const limit = await this.getModelContextLimit(info.providerID, info.modelID);
+    const limit = await this.getModelContextLimit(
+      info.providerID,
+      info.modelID,
+    );
     if (limit && limit > 0) {
       const pct = Math.round((used / limit) * 100);
       return `Context: ${formatTokenCount(used)} / ${formatTokenCount(limit)} tokens (${pct}%)`;
@@ -941,7 +1028,9 @@ export class OpencodeRuntime {
     const usedModel = extractUsedModel(source);
     if (!usedModel || usedModel === run.loggedModel) return;
     run.loggedModel = usedModel;
-    console.log(`[opencode-runtime] model used thread=${run.threadId} ${usedModel}`);
+    console.log(
+      `[opencode-runtime] model used thread=${run.threadId} ${usedModel}`,
+    );
   }
 
   private maybeEmitToolStage(
@@ -984,7 +1073,11 @@ export class OpencodeRuntime {
 
   private emitStageOnce(
     run: ActiveRun,
-    stage: "research_started" | "web_data_started" | "draft_started" | "knowledge_update_started",
+    stage:
+      | "research_started"
+      | "web_data_started"
+      | "draft_started"
+      | "knowledge_update_started",
   ): void {
     if (run.emittedStages.has(stage)) return;
     run.emittedStages.add(stage);
@@ -997,7 +1090,10 @@ export class OpencodeRuntime {
     await this.completeRun(run, "", new Error(message));
   }
 
-  private async recoverRunFromStall(run: ActiveRun, reason: string): Promise<void> {
+  private async recoverRunFromStall(
+    run: ActiveRun,
+    reason: string,
+  ): Promise<void> {
     if (run.recoveryAttempts >= MAX_STALL_RECOVERY_ATTEMPTS) {
       await this.failRun(
         run.threadId,
@@ -1082,15 +1178,12 @@ export class OpencodeRuntime {
     }
 
     const fallback = this.config.providers.opencode?.fallbackModel;
-    if (
-      isRateLimit(error) &&
-      fallback &&
-      !run.usedFallbackModel
-    ) {
+    if (isRateLimit(error) && fallback && !run.usedFallbackModel) {
       run.usedFallbackModel = true;
       run.currentModel = fallback;
       const primary =
-        formatConfiguredModel(this.config.providers.opencode?.model) ?? "default";
+        formatConfiguredModel(this.config.providers.opencode?.model) ??
+        "default";
       const fallbackStr = formatConfiguredModel(fallback)!;
       console.warn(
         `[opencode-runtime] rate-limited on ${primary}, switching to fallback ${fallbackStr} thread=${run.threadId}`,
@@ -1141,13 +1234,22 @@ export class OpencodeRuntime {
       run.latestAssistantCreatedAt = undefined;
       run.lastPartMessageId = undefined;
       run.lastPartFingerprint = undefined;
-      run.meta = { ...run.meta, sessionId, startedAtMs: now, updatedAtMs: now, lastError: "" };
+      run.meta = {
+        ...run.meta,
+        sessionId,
+        startedAtMs: now,
+        updatedAtMs: now,
+        lastError: "",
+      };
       this.clearPendingAssistantShell(run);
       this.sessionToThread.set(sessionId, run.threadId);
       upsertThreadRun(run.meta);
       await this.launchPrompt(run, run.meta.lastUserText);
     } catch (error) {
-      await this.failRun(run.threadId, `Fallback model switch failed: ${extractErrorMessage(error)}`);
+      await this.failRun(
+        run.threadId,
+        `Fallback model switch failed: ${extractErrorMessage(error)}`,
+      );
     }
   }
 
@@ -1155,7 +1257,9 @@ export class OpencodeRuntime {
     threadId: string,
     callbacks: RuntimeCallbacks,
   ): Promise<ActiveRun> {
-    const run = this.activeRuns.get(threadId) || this.restoreActiveRun(threadId, callbacks);
+    const run =
+      this.activeRuns.get(threadId) ||
+      this.restoreActiveRun(threadId, callbacks);
     if (!run) {
       throw new Error(`No active run for thread ${threadId}`);
     }
@@ -1259,7 +1363,9 @@ export class OpencodeRuntime {
     );
   }
 
-  private async unwrap<T>(promise: Promise<{ data?: T; error?: unknown }>): Promise<T> {
+  private async unwrap<T>(
+    promise: Promise<{ data?: T; error?: unknown }>,
+  ): Promise<T> {
     const result = await this.ensureSuccess(promise);
     if (result.data === undefined) {
       throw new Error("OpenCode request returned no data");
@@ -1267,7 +1373,9 @@ export class OpencodeRuntime {
     return result.data;
   }
 
-  private async ensureSuccess<T>(promise: Promise<{ data?: T; error?: unknown }>): Promise<{
+  private async ensureSuccess<T>(
+    promise: Promise<{ data?: T; error?: unknown }>,
+  ): Promise<{
     data?: T;
     error?: unknown;
   }> {
@@ -1287,7 +1395,11 @@ export class OpencodeRuntime {
     reason: "permission" | "question",
   ): void {
     const observed = this.ensureObservedExternalSession(sessionId);
-    this.publicActivity.emit({ type: "task_waiting", task: observed.task, reason });
+    this.publicActivity.emit({
+      type: "task_waiting",
+      task: observed.task,
+      reason,
+    });
   }
 
   private maybeEmitObservedToolStage(
@@ -1309,7 +1421,9 @@ export class OpencodeRuntime {
     });
   }
 
-  private ensureObservedExternalSession(sessionId: string): ObservedExternalSession {
+  private ensureObservedExternalSession(
+    sessionId: string,
+  ): ObservedExternalSession {
     const existing = this.observedExternalSessions.get(sessionId);
     if (existing) return existing;
 
@@ -1353,12 +1467,16 @@ export class OpencodeRuntime {
 
 function buildImageFileParts(images?: RunImageInput[]): FilePartInput[] {
   if (!images?.length) return [];
-  return images.map((image) => ({
-    type: "file",
-    mime: image.mime,
-    filename: image.filename,
-    url: image.url,
-  }));
+  return images
+    .filter((image): image is RunImageInput & { url: string } =>
+      Boolean(image.url),
+    )
+    .map((image) => ({
+      type: "file",
+      mime: image.mime,
+      filename: image.filename,
+      url: image.url,
+    }));
 }
 
 function collectMessageText(parts: Part[]): string {
@@ -1421,7 +1539,9 @@ function findLatestAssistantPart(
 
   if (assistantParts.length === 0) return undefined;
 
-  return assistantParts.sort((a, b) => getPartTimestamp(b) - getPartTimestamp(a))[0];
+  return assistantParts.sort(
+    (a, b) => getPartTimestamp(b) - getPartTimestamp(a),
+  )[0];
 }
 
 function getPartTimestamp(part: Part): number {
@@ -1516,7 +1636,9 @@ function composeRunPrompt(request: GmailRunRequest): string {
   const body = request.textBody?.trim() ?? "";
   // Drop reply/forward prefixes and the placeholder used for missing subjects so
   // they don't become noise at the top of the prompt.
-  let subject = (request.subject?.trim() ?? "").replace(/^(re|fwd|fw)\s*:\s*/i, "").trim();
+  let subject = (request.subject?.trim() ?? "")
+    .replace(/^(re|fwd|fw)\s*:\s*/i, "")
+    .trim();
   if (subject.toLowerCase() === "(no subject)") subject = "";
   if (!subject) return body;
   if (!body) return subject;
@@ -1585,13 +1707,19 @@ function shouldRecoverAssistantShell(
   sessionStatus: string | undefined,
 ): boolean {
   if (sessionStatus !== "busy") return false;
-  if (!run.pendingAssistantShellMessageId || !run.pendingAssistantShellCreatedAtMs) {
+  if (
+    !run.pendingAssistantShellMessageId ||
+    !run.pendingAssistantShellCreatedAtMs
+  ) {
     return false;
   }
   if (run.lastPartMessageId === run.pendingAssistantShellMessageId) {
     return false;
   }
-  return now - run.pendingAssistantShellCreatedAtMs > ASSISTANT_SHELL_STALL_TIMEOUT_MS;
+  return (
+    now - run.pendingAssistantShellCreatedAtMs >
+    ASSISTANT_SHELL_STALL_TIMEOUT_MS
+  );
 }
 
 function shouldSyncBusyMessages(
@@ -1608,7 +1736,8 @@ function buildAssistantShellStallMessage(
   run: ActiveRun,
   sessionStatus: string | undefined,
 ): string {
-  const shellAgeMs = Date.now() - (run.pendingAssistantShellCreatedAtMs || run.lastProgressAtMs);
+  const shellAgeMs =
+    Date.now() - (run.pendingAssistantShellCreatedAtMs || run.lastProgressAtMs);
   return [
     `OpenCode created an empty assistant message shell and produced no parts for ${formatDuration(shellAgeMs)}.`,
     `Last progress: ${run.lastProgressSummary}.`,
@@ -1621,7 +1750,8 @@ function buildWebAccessHandoffMessage(
   run: ActiveRun,
   sessionStatus: string | undefined,
 ): string {
-  const idleForMs = Date.now() - (run.webAccessLoadedAtMs || run.lastProgressAtMs);
+  const idleForMs =
+    Date.now() - (run.webAccessLoadedAtMs || run.lastProgressAtMs);
   return [
     `OpenCode stalled after loading web-access and produced no follow-up activity for ${formatDuration(idleForMs)}.`,
     `Last progress: ${run.lastProgressSummary}.`,
@@ -1672,9 +1802,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function formatConfiguredModel(
-  model?: { providerID: string; modelID: string },
-): string | undefined {
+function formatConfiguredModel(model?: {
+  providerID: string;
+  modelID: string;
+}): string | undefined {
   const provider = model?.providerID?.trim();
   const modelID = model?.modelID?.trim();
   if (!provider || !modelID) return undefined;
@@ -1702,8 +1833,10 @@ function extractProviderModelPair(source: unknown): string | undefined {
   const modelID = readString(record.modelID);
   if (providerID && modelID) return `${providerID}/${modelID}`;
 
-  const provider = readString(record.provider) || readNestedString(record.provider, "id");
-  const model = readString(record.model) || readNestedString(record.model, "id");
+  const provider =
+    readString(record.provider) || readNestedString(record.provider, "id");
+  const model =
+    readString(record.model) || readNestedString(record.model, "id");
   if (provider && model) return `${provider}/${model}`;
 
   return undefined;

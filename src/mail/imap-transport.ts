@@ -17,6 +17,7 @@ import {
   type OutboundMessage,
   type OutboundResult,
 } from "./transport.js";
+import { stageInboundAttachment } from "./attachment-staging.js";
 
 export interface ImapSmtpConfig {
   user: string;
@@ -36,10 +37,12 @@ const MAX_POLL_MESSAGES = 10;
 // Cap on the per-message parsed-source cache so long-running processes don't
 // accumulate full message bodies for messages that were already handled.
 const MAX_PARSED_CACHE = 32;
-const CONNECT_TIMEOUT_MS = Number(process.env.GMAIL_CONNECT_TIMEOUT_MS) || 30_000;
+const CONNECT_TIMEOUT_MS =
+  Number(process.env.GMAIL_CONNECT_TIMEOUT_MS) || 30_000;
 const GREETING_TIMEOUT_MS =
   Number(process.env.GMAIL_GREETING_TIMEOUT_MS) || 15_000;
-const SOCKET_TIMEOUT_MS = Number(process.env.GMAIL_SOCKET_TIMEOUT_MS) || 120_000;
+const SOCKET_TIMEOUT_MS =
+  Number(process.env.GMAIL_SOCKET_TIMEOUT_MS) || 120_000;
 
 interface SmtpOptions {
   host: string;
@@ -107,7 +110,9 @@ export class ImapSmtpTransport implements MailTransport {
       ...(proxy ? { proxy } : {}),
     };
     this.smtp = nodemailer.createTransport(smtpOptions);
-    console.log(`[gmail] verifying SMTP ${this.config.smtpHost}:${this.config.smtpPort}`);
+    console.log(
+      `[gmail] verifying SMTP ${this.config.smtpHost}:${this.config.smtpPort}`,
+    );
     await this.smtp.verify();
 
     console.log(
@@ -121,7 +126,8 @@ export class ImapSmtpTransport implements MailTransport {
     newerThan: string,
   ): Promise<string[]> {
     const client = await this.ensureImap();
-    const windowMs = parseNewerThanWindowMs(newerThan) ?? 3 * 24 * 60 * 60 * 1000;
+    const windowMs =
+      parseNewerThanWindowMs(newerThan) ?? 3 * 24 * 60 * 60 * 1000;
     const since = new Date(Date.now() - windowMs);
 
     const lock = await client.getMailboxLock("INBOX");
@@ -183,15 +189,25 @@ export class ImapSmtpTransport implements MailTransport {
       if (!buffer || buffer.byteLength === 0) continue;
       if (buffer.byteLength > MAX_INBOUND_IMAGE_BYTES) continue;
 
+      const staged = await stageInboundAttachment({
+        messageId: id,
+        filename: attachment.filename || `image-${images.length + 1}`,
+        content: buffer,
+      });
+
       images.push({
         mime,
         filename: attachment.filename || `image-${images.length + 1}`,
         url: `data:${mime};base64,${buffer.toString("base64")}`,
+        localPath: staged.localPath,
+        size: staged.size,
       });
     }
 
     if (images.length > 0) {
-      console.log(`[gmail] extracted ${images.length} inline image(s) from ${id}`);
+      console.log(
+        `[gmail] extracted ${images.length} inline image(s) from ${id}`,
+      );
     }
     return images;
   }
@@ -219,8 +235,7 @@ export class ImapSmtpTransport implements MailTransport {
     // With no prior thread, the message we just sent becomes the thread root;
     // otherwise the conversation is anchored on the original root id so replies
     // on either side resolve to the same thread.
-    const threadId =
-      message.references?.[0] || message.inReplyTo || messageId;
+    const threadId = message.references?.[0] || message.inReplyTo || messageId;
 
     return { messageId, threadId };
   }
@@ -287,7 +302,11 @@ export class ImapSmtpTransport implements MailTransport {
     const client = await this.ensureImap();
     const lock = await client.getMailboxLock("INBOX");
     try {
-      const msg = await client.fetchOne(String(uid), { source: true }, { uid: true });
+      const msg = await client.fetchOne(
+        String(uid),
+        { source: true },
+        { uid: true },
+      );
       if (!msg || !msg.source) return null;
       const parsed = await simpleParser(msg.source);
       if (this.parsedByMessageId.size >= MAX_PARSED_CACHE) {

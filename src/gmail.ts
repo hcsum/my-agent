@@ -19,11 +19,13 @@ import {
   releaseClaim,
   resetThreadFailures,
   tryClaimMessage,
+  updateThreadRunStatus,
   upsertThreadSessionLink,
 } from "./db.js";
 import type {
   PendingPermissionRecord,
   PendingQuestionRecord,
+  ThreadRunRecord,
 } from "./db.js";
 import { AppOrchestrator } from "./app/orchestrator.js";
 import type { ExecutionSlot } from "./execution-slot.js";
@@ -682,12 +684,13 @@ export class GmailBridge {
         }),
       );
       if (run.status === "running") {
+        let resumed = false;
         await this.startManagedRun(
           run.threadId,
           `gmail resume ${run.threadId}`,
           this.getPublicTask(run.threadId),
           async () => {
-            const resumed = await this.orchestrator.resumeRun(
+            resumed = await this.orchestrator.resumeRun(
               run.threadId,
               this.buildRuntimeCallbacks(run.threadId),
             );
@@ -697,14 +700,49 @@ export class GmailBridge {
             return resumed;
           },
         );
+        if (!resumed) {
+          await this.expireInterruptedRun(run);
+        }
         continue;
       }
 
-      await this.orchestrator.resumeRun(
+      const resumed = await this.orchestrator.resumeRun(
         run.threadId,
         this.buildRuntimeCallbacks(run.threadId),
       );
+      if (!resumed) {
+        await this.expireInterruptedRun(run);
+      }
     }
+  }
+
+  // A run left in an active state (running / waiting_permission /
+  // waiting_question) whose provider can no longer resume it was interrupted by
+  // a restart: its continuation (the paused agent generator and the in-memory
+  // resolve callback) did not survive the process boundary. The persisted row
+  // is a stale shadow of vanished in-memory state — without this reconciliation
+  // a later reply hits "No active run", the pending record is never cleared,
+  // and the thread re-prompts forever. Drop the shadow, mark the run failed,
+  // and tell the user to resend so nothing loops.
+  private async expireInterruptedRun(run: ThreadRunRecord): Promise<void> {
+    clearPendingPermission(run.threadId);
+    clearPendingQuestion(run.threadId);
+    updateThreadRunStatus({
+      threadId: run.threadId,
+      status: "failed",
+      lastError: "Interrupted by a bridge restart before completion.",
+    });
+    this.executionSlot.release(run.threadId);
+    console.warn(
+      `[gmail] expired unresumable run thread=${run.threadId} (interrupted by restart)`,
+    );
+    await this.sendReply(
+      run.threadId,
+      buildFailureReply(
+        "This task was interrupted when the assistant restarted, so I can't resume it. Reply with a fresh request to start over.",
+      ),
+      { flushAttachments: false },
+    );
   }
 
   async sendScheduledResult(payload: ScheduledResultPayload): Promise<void> {

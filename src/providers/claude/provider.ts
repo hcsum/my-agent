@@ -1,4 +1,6 @@
 import { Buffer } from "node:buffer";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 import {
   query,
@@ -7,6 +9,7 @@ import {
   type PermissionResult,
   type PermissionUpdate,
   type SDKMessage,
+  type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -60,6 +63,13 @@ const CHANNEL_SESSION_TITLES: Record<string, string> = {
   gmail: "Gmail Andy",
 };
 
+const IMAGE_SUMMARY_SYSTEM_PROMPT = [
+  "You convert inbound email image attachments into a compact, faithful markdown briefing for a downstream coding/research agent.",
+  "Extract visible text, tables, charts, holdings, numbers, dates, and any user-relevant facts.",
+  "Keep uncertainty explicit. Do not invent details that are not visible.",
+  "Return only markdown. Do not call tools.",
+].join("\n");
+
 export class ClaudeProvider implements AgentProvider {
   private readonly stateStore: StateStore;
   private readonly activeRuns = new Map<string, ClaudeActiveRun>();
@@ -109,7 +119,8 @@ export class ClaudeProvider implements AgentProvider {
 
     for await (const message of query({ prompt, options })) {
       latestSessionId = captureSessionId(message) || latestSessionId;
-      latestAssistantText = extractAssistantText(message) || latestAssistantText;
+      latestAssistantText =
+        extractAssistantText(message) || latestAssistantText;
       if (message.type === "result") {
         latestSessionId = message.session_id || latestSessionId;
         if (message.subtype === "success") {
@@ -186,7 +197,9 @@ export class ClaudeProvider implements AgentProvider {
     const run = this.getRun(threadId);
     run.callbacks = callbacks;
     if (!run.pendingPermission || run.pendingPermission.id !== permissionId) {
-      throw new Error(`No pending Claude permission ${permissionId} for ${threadId}`);
+      throw new Error(
+        `No pending Claude permission ${permissionId} for ${threadId}`,
+      );
     }
 
     if (response === "reject") {
@@ -218,10 +231,15 @@ export class ClaudeProvider implements AgentProvider {
     const run = this.getRun(threadId);
     run.callbacks = callbacks;
     if (!run.pendingQuestion || run.pendingQuestion.id !== questionId) {
-      throw new Error(`No pending Claude question ${questionId} for ${threadId}`);
+      throw new Error(
+        `No pending Claude question ${questionId} for ${threadId}`,
+      );
     }
 
-    const answerMap = buildQuestionAnswerMap(run.pendingQuestion.input, answers);
+    const answerMap = buildQuestionAnswerMap(
+      run.pendingQuestion.input,
+      answers,
+    );
     run.pendingQuestion.resolve({
       behavior: "allow",
       updatedInput: {
@@ -247,9 +265,12 @@ export class ClaudeProvider implements AgentProvider {
   ): Promise<void> {
     let finalError: string | undefined;
     let completedText = "";
+    let resultMessage: SDKResultMessage | undefined;
+    let latestAssistantUsage: MessageUsage | undefined;
 
     try {
-      const prompt = buildRunPrompt(request);
+      const preparedRequest = await this.prepareRunRequest(run, request);
+      const prompt = buildRunPrompt(preparedRequest);
       const options = this.buildClaudeOptions({
         sessionId: run.sessionId,
         workingDirectory: undefined,
@@ -259,8 +280,11 @@ export class ClaudeProvider implements AgentProvider {
 
       for await (const message of query({ prompt, options })) {
         run.sessionId = captureSessionId(message) || run.sessionId;
+        latestAssistantUsage =
+          extractAssistantUsage(message) || latestAssistantUsage;
         if (message.type !== "result") continue;
 
+        resultMessage = message;
         run.sessionId = message.session_id || run.sessionId;
         if (message.subtype === "success") {
           completedText = message.result;
@@ -279,7 +303,11 @@ export class ClaudeProvider implements AgentProvider {
       }
 
       await run.callbacks.onComplete(
-        completedText || "Claude completed the task but returned no text.",
+        appendContextUsageFooter(
+          completedText || "Claude completed the task but returned no text.",
+          latestAssistantUsage,
+          resultMessage,
+        ),
       );
     } catch (error) {
       finalError = error instanceof Error ? error.message : String(error);
@@ -288,6 +316,88 @@ export class ClaudeProvider implements AgentProvider {
       this.activeRuns.delete(run.threadId);
       await run.callbacks.onTerminal();
     }
+  }
+
+  private async prepareRunRequest(
+    run: ClaudeActiveRun,
+    request: AgentRunRequest,
+  ): Promise<AgentRunRequest> {
+    if (!request.images?.length) return request;
+
+    try {
+      const summary = await this.summarizeImagesForRun(run, request);
+      if (!summary.trim())
+        return withoutImages(
+          request,
+          "Image attachments were present, but the vision prepass returned no summary.",
+        );
+
+      console.log(
+        `[claude] summarized ${request.images.length} image attachment(s) thread=${run.threadId}`,
+      );
+      return {
+        ...request,
+        textBody: appendImageSummary(request.textBody, summary),
+        images: [],
+      };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[claude] image prepass failed thread=${run.threadId}; continuing text-only: ${detail}`,
+      );
+      return withoutImages(
+        request,
+        [
+          "Image attachments were received but could not be summarized before the main agent run.",
+          ...request.images.map(formatImageReference),
+        ].join("\n"),
+      );
+    }
+  }
+
+  private async summarizeImagesForRun(
+    run: ClaudeActiveRun,
+    request: AgentRunRequest,
+  ): Promise<string> {
+    let resultText = "";
+    let latestAssistantText = "";
+    let resultMessage: SDKResultMessage | undefined;
+
+    const prompt = streamImageSummaryPrompt(request);
+    const options: ClaudeOptions = {
+      cwd: this.defaultWorkingDirectory(),
+      abortController: run.abortController,
+      tools: [],
+      settingSources: [],
+      maxTurns: 1,
+      systemPrompt: IMAGE_SUMMARY_SYSTEM_PROMPT,
+      ...(this.config.providers.claude?.model
+        ? { model: this.config.providers.claude.model }
+        : {}),
+    };
+
+    for await (const message of query({ prompt, options })) {
+      latestAssistantText =
+        extractAssistantText(message) || latestAssistantText;
+      if (message.type !== "result") continue;
+      resultMessage = message;
+      if (message.subtype === "success") {
+        resultText = message.result;
+      } else {
+        throw new Error(
+          message.errors.join("\n") || "Claude image prepass failed",
+        );
+      }
+    }
+
+    const usage = resultMessage?.usage;
+    if (usage) {
+      console.log(
+        `[claude] image prepass usage thread=${run.threadId} input=${usage.input_tokens} cacheRead=${usage.cache_read_input_tokens} cacheCreate=${usage.cache_creation_input_tokens} output=${usage.output_tokens}`,
+      );
+    }
+
+    return resultText.trim() || latestAssistantText.trim();
   }
 
   private buildCanUseTool(run: ClaudeActiveRun): CanUseTool {
@@ -321,6 +431,15 @@ export class ClaudeProvider implements AgentProvider {
         });
       }
 
+      if (
+        isWorkspaceReadTool(toolName, input, this.defaultWorkingDirectory())
+      ) {
+        return {
+          behavior: "allow",
+          toolUseID: context.toolUseID,
+        };
+      }
+
       return new Promise<PermissionResult>((resolve) => {
         run.pendingPermission = {
           id: context.requestId,
@@ -351,7 +470,9 @@ export class ClaudeProvider implements AgentProvider {
     return {
       cwd: params.workingDirectory || this.defaultWorkingDirectory(),
       ...(params.sessionId ? { resume: params.sessionId } : {}),
-      ...(params.abortController ? { abortController: params.abortController } : {}),
+      ...(params.abortController
+        ? { abortController: params.abortController }
+        : {}),
       ...(params.canUseTool ? { canUseTool: params.canUseTool } : {}),
       ...(this.config.providers.claude?.model
         ? { model: this.config.providers.claude.model }
@@ -433,6 +554,40 @@ function composeManagedRunPrompt(request: AgentRunRequest): string {
     .join("\n");
 }
 
+function appendImageSummary(textBody: string, summary: string): string {
+  return [
+    textBody.trim(),
+    "",
+    "## Image attachment summary",
+    "",
+    summary.trim(),
+    "",
+    "The original image bytes were summarized before this main agent run to keep the working context small. Use the listed local paths only if a visual detail must be rechecked.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function withoutImages(
+  request: AgentRunRequest,
+  note: string,
+): AgentRunRequest {
+  return {
+    ...request,
+    textBody: appendImageSummary(request.textBody, note),
+    images: [],
+  };
+}
+
+function formatImageReference(image: {
+  filename: string;
+  mime: string;
+  localPath?: string;
+  size?: number;
+}): string {
+  return `- ${image.filename} (${image.mime}${image.size ? `, ${image.size} bytes` : ""})${image.localPath ? `: ${image.localPath}` : ""}`;
+}
+
 // When the request carries attachments, forward them to Claude as native
 // image/document content blocks. Text-only runs stay on the simple string
 // prompt so the common path is unchanged.
@@ -451,6 +606,7 @@ async function* streamRunPrompt(
   const content: Array<Record<string, unknown>> = [{ type: "text", text }];
 
   for (const image of request.images || []) {
+    if (!image.url) continue;
     const parsed = parseDataUrl(image.url);
     if (!parsed) continue;
     if (parsed.mediaType === "application/pdf") {
@@ -479,6 +635,85 @@ async function* streamRunPrompt(
     message: { role: "user", content },
     parent_tool_use_id: null,
   } as unknown as SDKUserMessage;
+}
+
+async function* streamImageSummaryPrompt(
+  request: AgentRunRequest,
+): AsyncGenerator<SDKUserMessage> {
+  const content: Array<Record<string, unknown>> = [
+    {
+      type: "text",
+      text: [
+        "Summarize these email image attachments for the main agent run.",
+        "",
+        "Email context:",
+        `Subject: ${request.subject}`,
+        `Sender: ${request.senderName} <${request.senderEmail}>`,
+        `Timestamp: ${request.timestamp.toISOString()}`,
+        "",
+        "Attachment list:",
+        ...(request.images || []).map(formatImageReference),
+      ].join("\n"),
+    },
+  ];
+
+  for (const image of request.images || []) {
+    const block = await buildClaudeAttachmentBlock(image);
+    content.push({
+      type: "text",
+      text: `Attachment: ${formatImageReference(image)}`,
+    });
+    if (block) {
+      content.push(block);
+    } else {
+      content.push({
+        type: "text",
+        text: "This attachment could not be loaded for vision analysis.",
+      });
+    }
+  }
+
+  yield {
+    type: "user",
+    message: { role: "user", content },
+    parent_tool_use_id: null,
+  } as unknown as SDKUserMessage;
+}
+
+async function buildClaudeAttachmentBlock(image: {
+  mime: string;
+  url?: string;
+  localPath?: string;
+}): Promise<Record<string, unknown> | undefined> {
+  const parsed = image.localPath
+    ? {
+        mediaType: image.mime,
+        data: await fs.readFile(image.localPath, "base64"),
+      }
+    : image.url
+      ? parseDataUrl(image.url)
+      : undefined;
+  if (!parsed) return undefined;
+
+  if (parsed.mediaType === "application/pdf") {
+    return {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: parsed.data,
+      },
+    };
+  }
+
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: parsed.mediaType,
+      data: parsed.data,
+    },
+  };
 }
 
 function parseDataUrl(
@@ -517,10 +752,73 @@ function extractAssistantText(message: SDKMessage): string {
     .trim();
 }
 
-function extractPermissionPattern(
-  toolName: string,
-  input: unknown,
+interface MessageUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+}
+
+// The SDK result's `usage` is the run's cumulative billing usage: it re-adds the
+// cached prefix (cache_read) and per-turn output on every API round-trip, so
+// dividing it by a single context window overcounts wildly on multi-turn runs.
+// Context occupancy is a point-in-time measure — the input side of the *last*
+// request — so we read the final assistant message's usage instead.
+function appendContextUsageFooter(
+  text: string,
+  usage?: MessageUsage,
+  result?: SDKResultMessage,
 ): string {
+  const footer = buildContextUsageFooter(usage, result);
+  if (!footer) return text;
+  return `${text.trim()}\n\n—\n${footer}`;
+}
+
+function buildContextUsageFooter(
+  usage?: MessageUsage,
+  result?: SDKResultMessage,
+): string {
+  if (!usage) return "";
+
+  // Everything that occupies the context window at the end of the run: the full
+  // input of the final request (fresh + cached + cache-creation) plus the tokens
+  // that request generated. No cross-turn accumulation.
+  const used =
+    usage.input_tokens +
+    usage.cache_read_input_tokens +
+    usage.cache_creation_input_tokens +
+    usage.output_tokens;
+  if (used <= 0) return "";
+
+  const limits = Object.values(result?.modelUsage || {})
+    .map((model) => model.contextWindow)
+    .filter((limit) => Number.isFinite(limit) && limit > 0);
+  const limit = limits.length > 0 ? Math.max(...limits) : undefined;
+  if (limit) {
+    const pct = Math.round((used / limit) * 100);
+    return `Context: ${formatTokenCount(used)} / ${formatTokenCount(limit)} tokens (${pct}%)`;
+  }
+  return `Context: ${formatTokenCount(used)} tokens`;
+}
+
+function extractAssistantUsage(message: SDKMessage): MessageUsage | undefined {
+  if (message.type !== "assistant") return undefined;
+  const usage = message.message.usage;
+  if (!usage) return undefined;
+  return {
+    input_tokens: usage.input_tokens ?? 0,
+    output_tokens: usage.output_tokens ?? 0,
+    cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
+  };
+}
+
+function formatTokenCount(count: number): string {
+  if (count < 1000) return `${count}`;
+  return `${(count / 1000).toFixed(1)}K`;
+}
+
+function extractPermissionPattern(toolName: string, input: unknown): string {
   if (!input || typeof input !== "object") return toolName;
   const record = input as Record<string, unknown>;
   if (toolName === "Bash" && typeof record.command === "string") {
@@ -530,6 +828,45 @@ function extractPermissionPattern(
     return record.file_path;
   }
   return JSON.stringify(input);
+}
+
+// Only read-only file tools are auto-approved inside the workspace — enough for
+// the agent to inspect staged image attachments and its own notes without a
+// prompt. Mutating tools (Write/Edit/MultiEdit) still require explicit
+// permission so a run can't silently overwrite workspace files.
+const WORKSPACE_READ_TOOLS = new Set(["Read", "Glob", "Grep", "LS"]);
+
+function isWorkspaceReadTool(
+  toolName: string,
+  input: unknown,
+  workspaceDir: string,
+): boolean {
+  if (!WORKSPACE_READ_TOOLS.has(toolName)) return false;
+  if (!input || typeof input !== "object") return false;
+
+  const record = input as Record<string, unknown>;
+  const rawPath =
+    typeof record.file_path === "string"
+      ? record.file_path
+      : typeof record.path === "string"
+        ? record.path
+        : undefined;
+
+  if (!rawPath) {
+    return toolName === "Glob" || toolName === "Grep";
+  }
+
+  return isPathInside(rawPath, workspaceDir);
+}
+
+function isPathInside(rawPath: string, workspaceDir: string): boolean {
+  const workspace = path.resolve(workspaceDir);
+  const target = path.resolve(workspace, rawPath);
+  const relative = path.relative(workspace, target);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
 }
 
 function buildQuestionAnswerMap(
@@ -544,11 +881,19 @@ function buildQuestionAnswerMap(
     const joined = answerList.join(", ").trim();
     mapped[question.question] = joined;
 
-    const optionLabels = new Set(question.options.map((option) => option.label));
-    if (!freeTextResponse && answerList.some((item) => !optionLabels.has(item))) {
+    const optionLabels = new Set(
+      question.options.map((option) => option.label),
+    );
+    if (
+      !freeTextResponse &&
+      answerList.some((item) => !optionLabels.has(item))
+    ) {
       freeTextResponse = joined;
     }
   });
 
-  return { answers: mapped, ...(freeTextResponse ? { response: freeTextResponse } : {}) };
+  return {
+    answers: mapped,
+    ...(freeTextResponse ? { response: freeTextResponse } : {}),
+  };
 }
