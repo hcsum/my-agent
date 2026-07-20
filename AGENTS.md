@@ -17,6 +17,7 @@ _./notes_ is a separate private Git repository containing the user's todos, note
 - Keep quotes, titles, product names, code identifiers, tickers, and proper nouns from English sources in their original form — don't translate them (e.g. `Snapdragon X2`, Verge article titles, `PLTR`, `CUDA`).
 - When summarizing English material, write the analysis in Chinese but keep key phrases in English where translation is hard or loses meaning.
 - Reply language is decided by the audience and content, not by the language of the triggering message. Even when the user triggers a task with an English phrase (e.g. `morning report`, an English slash command), still default to Chinese.
+- When explaining mechanisms or technical causes, be direct. Avoid repeatedly framing explanations as "不是 A，而是 B"; state the mechanism plainly.
 
 ## Mindset
 
