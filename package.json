@@ -6,6 +6,7 @@
   "description": "OpenCode workspace with skills, notes, and email bridge",
   "scripts": {
     "bridge": "bash scripts/bridge.sh",
+    "tui": "mkdir -p .data && OPENCODE_DB=\"$PWD/.data/opencode.db\" opencode .",
     "start": "bash scripts/server.sh",
     "cf:agent-status:check": "wrangler deploy --dry-run --config cloudflare/agent-status-worker/wrangler.jsonc",
     "cf:agent-status:deploy": "wrangler deploy --config cloudflare/agent-status-worker/wrangler.jsonc",

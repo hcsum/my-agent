@@ -26,12 +26,15 @@ export async function startOpencodeServer(
   const hostname = parsed.hostname || "127.0.0.1";
   const port = Number(parsed.port) || 4096;
 
-  // Keep opencode's DB inside the repo's .data/ (next to state.json) instead of
-  // opencode's default share dir. Must be absolute — opencode does not resolve
-  // a relative OPENCODE_DB against cwd. The spawned child inherits process.env.
+  // Keep opencode's DB inside the repo's .data/ by default. The server expects
+  // an absolute OPENCODE_DB, so resolve explicit relative overrides here.
   const dataDir = path.resolve(".data");
-  fs.mkdirSync(dataDir, { recursive: true });
-  process.env.OPENCODE_DB ||= path.join(dataDir, "opencode.db");
+  const configuredDb = process.env.OPENCODE_DB?.trim();
+  const dbPath = configuredDb
+    ? path.resolve(configuredDb)
+    : path.join(dataDir, "opencode.db");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  process.env.OPENCODE_DB = dbPath;
 
   // opencode honors HTTPS_PROXY; keep loopback calls off the proxy as the old
   // serve script did.

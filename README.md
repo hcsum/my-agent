@@ -1,20 +1,21 @@
-# My Agent
+# opencode-workspace
 
-My personal AI agent setup: custom skills, long-term memory, and email/Telegram bridges, running on OpenCode or Claude.
+My personal AI workspace: an OpenCode-centered runtime with custom skills, long-term memory, notes, scheduling, and email/Telegram bridges. It can also route work through Claude when needed.
 
 ## What it does
 
+- Runs a project-local OpenCode server and stores sessions in this workspace
 - Supports 2 runtimes: OpenCode and Claude
-- A built-in Gmail bridge
-- A set of skills customized to my needs
+- Provides a built-in Gmail bridge
+- Keeps a set of skills customized to my needs
 - A Cloudflare Worker endpoint that exposes the agent's live status and activity — see [hcxu.cc/agent](https://hcxu.cc/agent)
 - Assumes a git repo checked out into the `notes/` folder at the root of this repo
 
 ## How it fits together
 
-- **This repo** — code, skills, and instructions
-- **`notes/`** — a *separate* private git repo checked out here, holding my personal data, the agent's memory, research, and todos. Kept separate so this repo stays code, and `notes/` stays the data it operates on.
-- **Bridges** — the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot) let me reach the agent when I'm away from the desk
+- **This repo** — the workspace runtime: code, skills, instructions, bridge services, and project-local OpenCode state
+- **`notes/`** — a *separate* private git repo checked out here, holding my personal data, memory, research, and todos. Kept separate so this repo stays code, and `notes/` stays the data it operates on.
+- **Bridges** — the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot) let me reach the workspace when I'm away from the desk
 - **Status worker** — a Cloudflare Worker publishing live status to [hcxu.cc/agent](https://hcxu.cc/agent)
 
 ## Quick start
@@ -22,8 +23,9 @@ My personal AI agent setup: custom skills, long-term memory, and email/Telegram 
 ```bash
 npm install
 cp .env.example .env         # then fill it in (see below)
-npm run bridge               # start the Gmail bridge
-npm start                    # run the OpenCode server
+npm run bridge               # start the workspace bridge and OpenCode server
+npm start                    # run only the OpenCode server
+npm run tui                  # open the OpenCode TUI against the project-local DB
 ```
 
 Key `.env` settings (all documented inline in `.env.example`):
@@ -34,8 +36,8 @@ Key `.env` settings (all documented inline in `.env.example`):
 
 There's no first-run setup wizard yet — this is manual. For VPS deployment, see `docs/DEPLOY.md` and the `deploy-agent` skill.
 
-## How I use the agent
+## How I use it
 
 When I'm by the desk, I run `claude` / `codex` / `opencode` in this repo, so I have easy access to the skills and notes.
 
-When I'm away from the desk, I leave my laptop on and interact with the agent through the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot).
+When I'm away from the desk, I leave my laptop on and interact with the same workspace through the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot).
