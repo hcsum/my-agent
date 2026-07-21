@@ -161,6 +161,8 @@ const ALL="__all__",ALLPROJ="__allproj__";
 let scope=CORE,proj=ALLPROJ,view="todo";
 const $=(id)=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const SCOPE_TO_QUERY={[CORE]:"core",[ALL]:"all",[GAP]:"gap"};
+const QUERY_TO_SCOPE={core:CORE,all:ALL,gap:GAP};
 
 $("scopes").innerHTML=\`<button class="tab core" data-s="\${CORE}">🏆 保底名单</button>\`
   +\`<button class="tab" data-s="\${ALL}">📋 全部域名</button>\`
@@ -180,6 +182,35 @@ $("seg").onclick=e=>{const v=e.target.dataset.v;if(!v)return;view=v;
   [...$("seg").children].forEach(b=>b.classList.toggle("on",b.dataset.v===v));render();};
 ["q","easyOnly","tier"].forEach(id=>$(id).addEventListener("input",render));
 
+function loadStateFromUrl(){
+  const params=new URLSearchParams(location.search);
+  scope=QUERY_TO_SCOPE[params.get("scope")]||CORE;
+  const project=params.get("project");
+  proj=project&&(project===ALLPROJ||PROJECTS.includes(project))?project:ALLPROJ;
+  const nextView=params.get("view");
+  view=["todo","done","all"].includes(nextView)?nextView:"todo";
+  $("q").value=params.get("q")||"";
+  $("tier").value=params.has("tier")?params.get("tier"):(scope===GAP?"2":"0");
+  $("easyOnly").checked=params.has("easy")?params.get("easy")==="1":scope===GAP;
+  [...$("seg").children].forEach(b=>b.classList.toggle("on",b.dataset.v===view));
+}
+
+function saveStateToUrl(){
+  const params=new URLSearchParams();
+  if(scope!==CORE) params.set("scope",SCOPE_TO_QUERY[scope]);
+  if(proj!==ALLPROJ) params.set("project",proj);
+  if(view!=="todo") params.set("view",view);
+  const q=$("q").value.trim();
+  if(q) params.set("q",q);
+  if(scope!==CORE){
+    if($("tier").value!=="0") params.set("tier",$("tier").value);
+    if($("easyOnly").checked) params.set("easy","1");
+  }
+  const query=params.toString();
+  const next=location.pathname+(query?"?"+query:"")+location.hash;
+  if(next!==location.pathname+location.search+location.hash) history.replaceState(null,"",next);
+}
+
 // Baseline admission = what we verified on the page ourselves: the anchor passes
 // value (dofollow, or nofollow for referral) AND the page is indexable (robots
 // checked, not noindex). GSC confirmation is a bonus badge, NOT the gate -
@@ -190,6 +221,7 @@ const WORTH=["dofollow","nofollow"];
 const inCore=d=>WORTH.includes(d.follow)&&d.robotsChecked;
 
 function render(){
+  saveStateToUrl();
   [...$("scopes").children].forEach(b=>b.setAttribute("aria-selected",b.dataset.s===scope));
   [...$("tabs").children].forEach(b=>b.setAttribute("aria-selected",b.dataset.p===proj));
   const q=$("q").value.toLowerCase().trim();
@@ -227,9 +259,11 @@ function render(){
   // Say how many domains, then how far each project has got. The slot arithmetic
   // ("15 × 3 = 45 个位置") is noise - nobody acts on the product.
   const done=p=>scored.filter(d=>d.status[p]==="live").length;
+  const open=p=>scored.filter(d=>!d.status[p]).length;
+  const pending=p=>scored.filter(d=>d.status[p]&&d.status[p]!=="live").length;
   $("count").textContent=\`\${scope===CORE?"🏆 保底名单":scope===GAP?"🎯 补齐缺口":"📋 全部域名"} \${scored.length} 个域名\`
     +(extra?\`（另有 \${extra} 个 nofollow，顺手做）\`:"")+"｜"
-    +(one?\`\${proj} 已发 \${live}，还差 \${scored.length-live}\`
+    +(one?\`\${proj} 已发 \${live}，待发 \${open(proj)}\${pending(proj)?\`，审核中 \${pending(proj)}\`:""}\`
         :MAIN.map(p=>\`\${p.split(".")[0]} \${done(p)}\`).join(" · "));
 
   // --- Level 3: 待发 / 已发 / 全部 ---
@@ -258,6 +292,8 @@ function lens(){return proj===ALLPROJ?null:proj;}
 function card(d,need){
   const f=lens();
   const st=f?d.status[f]:"";
+  const openNeed=(need||[]).filter(p=>!d.status[p]);
+  const pendingNeed=(need||[]).filter(p=>d.status[p]);
   // Live links on other projects double as the how-to reference for this domain.
   // The current project's own link must come first and be marked, otherwise the
   // done view shows only *other* projects and reads as "mine is missing".
@@ -274,18 +310,18 @@ function card(d,need){
       \${d.dr!=null?\`<span class="dr">DR \${d.dr}</span>\`:""}
       \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 live 1×</span>':""}
       \${d.difficulty==="hard"?'<span class="tag hard">hard</span>':""}
-      \${st?\`<span class="tag \${st==="live"?"ok":st==="parked"?"hard":""}">\${LABEL[st]||st}</span>\`:""}
       \${evidence}
     </div>
-    \${need&&need.length?\`<div class="need">还差：\${need.map(p=>{
+    \${openNeed.length?\`<div class="need">还差：\${openNeed.map(p=>\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`).join("")}</div>\`:""}
+    \${pendingNeed.length?\`<div class="need">审核中：\${pendingNeed.map(p=>{
       const s=d.status[p];
-      return s?\`<span class="tag \${s==="parked"?"hard":""}">\${esc(p.split("/")[0])} \${LABEL[s]||s}</span>\`
-              :\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`;
+      return \`<span class="tag \${s==="parked"?"hard":""}">\${esc(p.split("/")[0])} \${LABEL[s]||s}</span>\`;
     }).join("")}</div>\`:""}
     \${why}
     \${d.note?\`<div class="note clip" onclick="this.classList.toggle('clip')">\${esc(d.note)}</div>\`:""}
   </div>\`;
 }
+loadStateFromUrl();
 render();
 </script></body></html>`;
 

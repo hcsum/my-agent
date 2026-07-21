@@ -12,5 +12,6 @@
     }
   },
   "instructions": ["notes/user.md"],
-  "plugin": ["./plugin/scheduler.ts", "./plugin/send-file.ts"]
+  "plugin": ["./plugin/scheduler.ts", "./plugin/send-file.ts"],
+  "permission": {}
 }
