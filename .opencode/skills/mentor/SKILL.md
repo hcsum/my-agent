@@ -1,6 +1,6 @@
 ---
 name: mentor
-description: Maintain the user's todo list in notes/todos.md — capture new todos, log what he's actually been doing and check it against his goals, report a consolidated view of what's ongoing, and update items as he reports progress. Use whenever the user wants to add a task ("add X to my todo", "note down X"), narrates what he did or has been working on ("today I did X", "I've been working on X lately"), asks what he's working on / should do next / whether it aligns with his goals ("what are my ongoing items", "what should I do", "organize my todo"), or reports a todo as done/advanced/dropped. Local and manual — the user drives it.
+description: Maintain the user's todo list in notes/todos.md — capture new todos, capture today's stated plan as a dated daily block and carry unfinished items to the next day, log what he's actually been doing and check it against his goals, report a consolidated view of what's ongoing, and update items as he reports progress. Use whenever the user wants to add a task ("add X to my todo", "note down X"), states today's plan / to-dos ("今天要做的是 X/Y/Z", "today's todos", "帮我排一下今天做什么"), asks what didn't close yesterday ("昨天哪些没做完"), narrates what he did or has been working on ("today I did X", "I've been working on X lately"), asks what he's working on / should do next / whether it aligns with his goals ("what are my ongoing items", "what should I do", "organize my todo"), or reports a todo as done/advanced/dropped. Local and manual — the user drives it.
 ---
 
 **Todo file:** `notes/todos.md` — the single write surface, referred to below as "the todo file".
@@ -19,7 +19,17 @@ You are an active coach, not a list printer. A flat read-back of his own list is
 
 ## The todo file
 
-Sections are H2: `## active` (in progress) / `## backlog` (want to do, not started) / `## done`.
+Sections are H2: `## daily` (dated day-plan blocks) / `## active` (in progress) / `## backlog` (want to do, not started) / `## done`.
+
+`## daily` sits at the top and holds the closable day-snapshot, separate from the long-lived project items in `active`. Each day the user states a plan is a `### MM-DD` block of checkbox lines:
+
+```
+### MM-DD
+- [ ] short item (reuse the matching active item's wording so it maps back)
+- [x] finished item
+```
+
+Keep it lean — prune blocks older than ~7 days. The `active`/`backlog`/`done` items carry the durable project state; the daily blocks are just what he set out to do that day and whether it closed.
 
 The yardstick — his durable, undated north-star `## goals`, one `- [theme] one-line goal` bullet each — lives in `user.md`, not here, and is always in context. Every `active` item should serve some goal; effort that serves none is drift worth surfacing. This skill only **reads** those goals; if one looks wrong or missing, flag it to him rather than editing `user.md` (the Mentor stance owns that file).
 
@@ -46,6 +56,11 @@ The yardstick — his durable, undated north-star `## goals`, one `- [theme] one
 - Land it on the list using existing mechanics: if it maps to an `active`/`backlog` item, treat it as **Update** (bump `touched`, note the concrete bit in a sub-bullet, promote backlog→active if it's now live); if it's a genuinely new ongoing thread, **Add** it under `## active`. Don't create a duplicate item for work already tracked.
 - Then check it against his goals in `user.md`: name in one line which goal this effort serves. If it serves none, say so plainly and ask whether it's a new goal worth adding or a distraction to drop — this drift check is the point of logging, not the bookkeeping. Keep it warm, not accusatory.
 - This is the lightweight, in-the-moment version of episodic progress tracking; it lives entirely in the todo file, no separate ledger.
+
+**Capture today's plan & carry over** — the user states what he means to do today ("今天要做的是…", "today's todos", "帮我排一下今天做什么"), or asks what didn't close yesterday.
+- Do the **Report & advise** work first (collapse, recommend one, order it) — the plan capture is *record-first*, not a substitute for advising. Then **write the day's list** into a `### MM-DD` block under `## daily`: one `- [ ]` line per intended task, reusing the matching `active` item's wording so it maps back. Record it by default — don't just advise verbally. If he later says to change the day's list, edit that block on his word (he drives it).
+- As he reports progress through the day, tick the matching line `- [x]` **and** still Update the underlying `active` item as usual (bump `touched`, note the concrete bit). Things he did that weren't on the plan get a `- [x]` line too.
+- **Next-day carryover:** when he asks "昨天哪些没做完", or states a new day's plan, read the most recent prior `### MM-DD` block and report the still-unchecked `- [ ]` lines. Proactively ask whether to carry them into today ("昨天的投简历/外链还没闭环，今天继续吗？") and fold the ones he keeps into today's new block. Prune blocks older than ~7 days while you're in there.
 
 **Report & advise** — the user asks what's ongoing / what to do next / to organize todos. This is the proactive core. Read the todo file, then do all four:
 
