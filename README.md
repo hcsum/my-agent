@@ -38,6 +38,6 @@ There's no first-run setup wizard yet — this is manual. For VPS deployment, se
 
 ## How I use it
 
-When I'm by the desk, I run `claude` / `codex` / `opencode` in this repo, so I have easy access to the skills and notes.
+My main entry point is the [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot), which talks to the OpenCode server running from this workspace. This lets me keep working from Telegram when I'm away from the desk.
 
-When I'm away from the desk, I leave my laptop on and interact with the same workspace through the Gmail bridge and [opencode-telegram-bot](https://github.com/grinev/opencode-telegram-bot).
+When I'm at the machine, I run `npm run tui` in this repo. The TUI uses the same project-local OpenCode state as the Telegram bot, so both sides see the same sessions and I can continue the same work from either Telegram or the local terminal.
