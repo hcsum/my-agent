@@ -12,7 +12,7 @@ memory.db
 .opencode/memory.db
 
 # Local bridge SQLite state.
-opencode.db
+opencode.db*
 
 # Claude Code local runtime artifacts (process locks, personal settings)
 .claude/scheduled_tasks.lock
