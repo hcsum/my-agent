@@ -107,6 +107,8 @@ main{padding:16px 20px 64px;display:grid;gap:9px;max-width:920px}
 .tag.ok{color:var(--ok);border-color:var(--ok)}
 .tag.gsc{background:var(--ok);color:#fff;border-color:var(--ok)}
 .tag.mine{background:var(--acc);color:#fff;border-color:var(--acc);text-decoration:none;font-weight:600}
+a.tag{text-decoration:none;cursor:pointer}
+a.tag:hover{border-color:var(--acc);color:var(--acc)}
 .note{margin-top:7px;font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
 .note.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
 .empty{color:var(--muted);font-size:14px;padding:20px 0}
@@ -314,8 +316,10 @@ function card(d,need){
     </div>
     \${openNeed.length?\`<div class="need">还差：\${openNeed.map(p=>\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`).join("")}</div>\`:""}
     \${pendingNeed.length?\`<div class="need">审核中：\${pendingNeed.map(p=>{
-      const s=d.status[p];
-      return \`<span class="tag \${s==="parked"?"hard":""}">\${esc(p.split("/")[0])} \${LABEL[s]||s}</span>\`;
+      const s=d.status[p], u=d.detail[p], label=\`\${esc(p.split("/")[0])} \${LABEL[s]||s}\`;
+      return u
+        ?\`<a class="tag \${s==="parked"?"hard":""}" href="\${esc(u)}" target="_blank" rel="noopener" title="打开审核页">\${label} ↗</a>\`
+        :\`<span class="tag \${s==="parked"?"hard":""}">\${label}</span>\`;
     }).join("")}</div>\`:""}
     \${why}
     \${d.note?\`<div class="note clip" onclick="this.classList.toggle('clip')">\${esc(d.note)}</div>\`:""}
