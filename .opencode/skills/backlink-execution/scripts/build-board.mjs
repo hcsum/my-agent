@@ -127,7 +127,7 @@ h2.grp span{font-weight:400;font-size:12px;opacity:.7}
 .edit{margin-top:9px;display:flex;gap:7px;align-items:center}
 .edit .check{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--fg);white-space:nowrap}
 .edit .check input{margin:0}
-.edit input[name=url]{flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:13px}
+.edit .placementUrl{flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:13px}
 .edit select{padding:7px 8px;font-size:13px;background:var(--bg)}
 .edit button{border:1px solid var(--ok);background:var(--ok);color:#fff;padding:7px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
 .edit button:disabled{opacity:.55;cursor:wait}
@@ -361,7 +361,7 @@ function card(d,need){
   const reviewMeta=f&&d.submittedAt[f]?\`<div class="note">已发时间：\${esc(d.submittedAt[f])}</div>\`:"";
   const edit=f&&EDITABLE?\`<form class="edit" data-website="\${esc(d.website)}" data-project="\${esc(f)}" onsubmit="return savePlacement(event)">
       <label class="check"><input name="submitted" type="checkbox" \${placedStatus(st)?"checked":""}> 已发</label>
-      <input name="url" type="text" value="\${esc(d.detail[f]||"")}" placeholder="外链 URL（可选）">
+      <input class="placementUrl" type="text" value="\${esc(d.detail[f]||"")}" placeholder="外链 URL（可选）">
       <button type="submit">保存</button>
       <span class="editMsg"></span>
     </form>\`:"";
@@ -398,7 +398,7 @@ async function savePlacement(event){
   const form=event.currentTarget;
   const button=form.querySelector("button");
   const msg=form.querySelector(".editMsg");
-  const url=form.elements.url.value.trim();
+  const url=form.querySelector(".placementUrl").value.trim();
   button.disabled=true;
   msg.textContent="保存中…";
   try{

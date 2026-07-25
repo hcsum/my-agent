@@ -41,8 +41,9 @@ function localDate(date = new Date()) {
 function savePlacement({ website, project, url = "", submitted }) {
   if (!website || typeof website !== "string") throw new Error("missing website");
   if (!project || typeof project !== "string") throw new Error("missing project");
-  if (!submitted) throw new Error("placement is not marked submitted");
   if (typeof url !== "string") throw new Error("url must be a string");
+  const placementUrl = url.trim();
+  if (!submitted && !placementUrl) throw new Error("mark submitted or provide a url");
 
   const master = readMaster();
   if (!Array.isArray(master.websites)) throw new Error("master.websites is missing");
@@ -57,7 +58,7 @@ function savePlacement({ website, project, url = "", submitted }) {
     site.placements.push(placement);
   }
   placement.status = "submitted";
-  if (url.trim()) placement.url = url.trim();
+  if (placementUrl) placement.url = placementUrl;
   else delete placement.url;
   const campaignId = activeCampaignId(master, project);
   if (campaignId) placement.campaign_id = campaignId;
