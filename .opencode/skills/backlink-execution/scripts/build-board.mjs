@@ -48,6 +48,7 @@ const data = records.map((r) => ({
   note: r.note || "",
   status: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).status || ""])),
   detail: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).url || placementFor(r, p).detail || ""])),
+  campaignId: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).campaign_id || ""])),
   indexStatus: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).index?.status || ""])),
   indexChecked: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).index?.checked_at || ""])),
   indexSource: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).index?.source || ""])),
@@ -280,27 +281,31 @@ function renderCampaign(pool){
   const eligible=pool.filter(inCore);
   const blocks=CAMPAIGNS.filter(c=>c.status==="active").map(c=>{
     const project=c.project;
+    const campaignId=c.id||project;
     const target=c.target_live||5;
-    const live=eligible.filter(d=>d.status[project]==="live");
-    const todo=eligible.filter(d=>d.status[project]!=="live");
-    const pending=todo.filter(d=>d.status[project]&&d.status[project]!=="live");
-    const open=todo.filter(d=>!d.status[project]);
-    const needCount=Math.max(0,target-live.length);
-    const picks=needCount
-      ? open.sort((a,b)=>(b.linkRel==="dofollow")-(a.linkRel==="dofollow")||b.tier-a.tier||(b.dr??-1)-(a.dr??-1)).slice(0,needCount)
-      : [];
+    const completed=eligible.filter(d=>d.status[project]==="live"&&d.campaignId[project]===campaignId);
+    const historical=eligible.filter(d=>d.status[project]==="live"&&d.campaignId[project]!==campaignId);
+    const pending=pool.filter(d=>d.status[project]&&d.status[project]!=="live");
+    const ready=eligible.filter(d=>!d.status[project]);
+    const review=pool.filter(d=>d.decision==="needs_review"&&!d.status[project]);
+    const needCount=Math.max(0,target-completed.length);
+    const sortReady=(items)=>items.sort((a,b)=>(b.linkRel==="dofollow")-(a.linkRel==="dofollow")||b.tier-a.tier||(b.dr??-1)-(a.dr??-1));
+    const picks=sortReady(ready).concat(sortReady(review)).slice(0,needCount);
     return \`<section class="campaign">
       <div class="campaignHead">
-        <h2>\${esc(campaignLabel(project))} <span class="campaignMeta">\${live.length}/\${target} active live</span></h2>
-        <span class="campaignMeta">还差 \${Math.max(0,target-live.length)}；候选 \${open.length}；审核中 \${pending.length}</span>
+        <h2>\${esc(campaignLabel(project))} <span class="campaignMeta">\${completed.length}/\${target} 本轮新增</span></h2>
+        <span class="campaignMeta">还差 \${needCount}；可直接做 \${ready.length}；待判断 \${review.length}；已发过 \${historical.length}；审核中 \${pending.length}</span>
       </div>
-      \${picks.length?picks.map(d=>card(d,[project])).join(""):\`<div class="empty">这个项目当前已经达到 \${target} 个 active live；后续只需要补 index 或做更高质量替换。</div>\`}
+      \${picks.length?picks.map(d=>card(d,[project])).join(""):\`<div class="empty">这个项目本轮新增已经达到 \${target} 个。</div>\`}
     </section>\`;
   });
   const total=CAMPAIGNS.filter(c=>c.status==="active").reduce((n,c)=>n+(c.target_live||5),0);
-  const liveCount=CAMPAIGNS.filter(c=>c.status==="active").reduce((n,c)=>n+Math.min(c.target_live||5,eligible.filter(d=>d.status[c.project]==="live").length),0);
-  $("bar").style.width=(total?Math.round(liveCount/total*100):0)+"%";
-  $("count").textContent=\`🎯 本轮目标｜\${liveCount}/\${total} active live；只显示每个项目下一批可发候选\`;
+  const doneCount=CAMPAIGNS.filter(c=>c.status==="active").reduce((n,c)=>{
+    const id=c.id||c.project;
+    return n+Math.min(c.target_live||5,eligible.filter(d=>d.status[c.project]==="live"&&d.campaignId[c.project]===id).length);
+  },0);
+  $("bar").style.width=(total?Math.round(doneCount/total*100):0)+"%";
+  $("count").textContent=\`🎯 本轮目标｜\${doneCount}/\${total} 本轮新增；只显示没发过的候选\`;
   $("list").innerHTML=blocks.join("")||'<div class="empty">没有 active campaign。</div>';
 }
 
