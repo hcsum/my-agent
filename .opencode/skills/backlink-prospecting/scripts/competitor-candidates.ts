@@ -24,8 +24,9 @@ import path from "node:path";
 
 const DOWNLOADS = path.join(os.homedir(), "Downloads");
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
-const MASTER = path.join(REPO, "notes/projects/site-backlinks/backlink-master.csv");
 const SITE_BACKLINKS = path.join(REPO, "notes/projects/site-backlinks");
+const MASTER_JSON = path.join(SITE_BACKLINKS, "backlink-master.json");
+const MASTER_CSV = path.join(SITE_BACKLINKS, "backlink-master.export.csv");
 
 function fail(msg: string): never {
   console.error(msg);
@@ -83,6 +84,23 @@ function col(header: string[], name: string): number {
   const i = header.indexOf(name);
   if (i === -1) fail(`Column "${name}" missing from header: ${header.join(", ")}`);
   return i;
+}
+
+// backlink-master.json (JSON with a `websites[].website` array) is the source of
+// truth since the 2026-07-25 migration; backlink-master.export.csv is a generated
+// inspection view kept as a fallback for older setups.
+function readMasterDomains(): Set<string> {
+  if (fs.existsSync(MASTER_JSON)) {
+    const data = JSON.parse(fs.readFileSync(MASTER_JSON, "utf8"));
+    const sites: any[] = Array.isArray(data?.websites) ? data.websites : [];
+    return new Set(sites.map((s) => normDomain(String(s?.website ?? "").trim())).filter(Boolean));
+  }
+  if (fs.existsSync(MASTER_CSV)) {
+    const master = readCsv(MASTER_CSV);
+    const wIdx = col(master.header, "website");
+    return new Set(master.rows.map((r) => normDomain((r[wIdx] ?? "").trim())).filter(Boolean));
+  }
+  fail(`No master file found: ${MASTER_JSON} or ${MASTER_CSV}`);
 }
 
 function normDomain(host: string): string {
@@ -148,9 +166,7 @@ function main() {
   const base = path.basename(backlinksFile).toLowerCase();
   const competitor = base.replace(/-backlinks.*$/, "").replace(/\.csv$/, "") || sub;
 
-  const master = readCsv(MASTER);
-  const wIdx = col(master.header, "website");
-  const masterSet = new Set(master.rows.map((r) => normDomain((r[wIdx] ?? "").trim())).filter(Boolean));
+  const masterSet = readMasterDomains();
 
   const domainAscore = new Map<string, number>();
   const refOrder: string[] = [];

@@ -71,6 +71,76 @@ function savePlacement({ website, project, url = "", submitted }) {
   return { ok: true, website, project, url: placement.url, status: placement.status };
 }
 
+// "发不了" — the user tried and the target didn't work. Three scopes, because
+// "why" splits three ways and collapsing them loses real targets:
+//   project — mismatch for this project only; other projects still see it
+//   defer   — a site-wide price/threshold, not a dead site. Out of the worklist
+//             but kept in its own visible bucket, because "要钱" is a decision
+//             deferred until there's budget, not a verdict.
+//   site    — the site is genuinely unusable; drop it for every project
+function blockPlacement({ website, project, reason = "", scope = "project", clear = false }) {
+  if (!website || typeof website !== "string") throw new Error("missing website");
+  if (!project || typeof project !== "string") throw new Error("missing project");
+  const text = String(reason).trim();
+  if (!clear && !text) throw new Error("写一句理由，不然过两周你不知道当初为什么放弃");
+
+  const master = readMaster();
+  if (!Array.isArray(master.websites)) throw new Error("master.websites is missing");
+  const site = master.websites.find((entry) => entry.website === website);
+  if (!site) throw new Error(`unknown website: ${website}`);
+
+  site.placements ||= [];
+  let placement = site.placements.find((entry) => entry.project === project);
+
+  if (clear) {
+    // Undo: drop the parked marker, and un-reject the domain if it was rejected
+    // from the board. Anything with a real URL is a placement, not a block.
+    if (placement && placement.status === "parked" && !placement.url) {
+      site.placements = site.placements.filter((entry) => entry !== placement);
+    }
+    if (site.decision?.status === "rejected" || site.decision?.status === "deferred") {
+      // Restore whatever it was before the block, so undoing an accidental
+      // reject doesn't silently drop a vetted target out of the baseline.
+      site.decision.status = site.decision.was || "needs_review";
+      site.decision.reason = site.decision.was_reason || "";
+      site.decision.decided_at = localDate();
+      delete site.decision.was;
+      delete site.decision.was_reason;
+    }
+    writeMaster(master);
+    execFileSync(process.execPath, [BUILD], { cwd: repo, stdio: "pipe" });
+    return { ok: true, website, project, cleared: true };
+  }
+
+  if (scope === "site" || scope === "defer") {
+    const next = scope === "site" ? "rejected" : "deferred";
+    const was = site.decision?.status;
+    site.decision = {
+      ...(site.decision || {}),
+      status: next,
+      reason: text,
+      decided_at: localDate(),
+      // Only stash a *real* prior status, so flipping 暂缓 → 排除 doesn't
+      // overwrite the "active" we still want to come back to.
+      ...(was && was !== "rejected" && was !== "deferred"
+        ? { was, was_reason: site.decision?.reason || "" }
+        : {}),
+    };
+  } else {
+    if (!placement) {
+      placement = { project, index: {} };
+      site.placements.push(placement);
+    }
+    placement.status = "parked";
+    placement.reason = text;
+    placement.blocked_at = localDate();
+  }
+
+  writeMaster(master);
+  execFileSync(process.execPath, [BUILD], { cwd: repo, stdio: "pipe" });
+  return { ok: true, website, project, scope };
+}
+
 function send(res, status, body, headers = {}) {
   res.writeHead(status, headers);
   res.end(body);
@@ -95,6 +165,15 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/placements") {
       const result = savePlacement(await readJson(req));
+      send(res, 200, JSON.stringify(result), {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/blocked") {
+      const result = blockPlacement(await readJson(req));
       send(res, 200, JSON.stringify(result), {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",

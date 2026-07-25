@@ -94,6 +94,7 @@ export async function resolveLocalBrowser(config) {
         browserId: config.browserId || null,
         dedicatedProfileDir: config.dedicatedProfileDir || null,
         port,
+        cdpVerified: verified,
         wsUrl: wsPath ? `ws://127.0.0.1:${port}${wsPath}` : `ws://127.0.0.1:${port}/devtools/browser`,
       };
     } catch {}

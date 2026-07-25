@@ -60,6 +60,19 @@ export async function resolveRuntimeAvailability(config) {
   if (primary) availableModes.push('primary');
   if (dedicated) availableModes.push('dedicated');
   if (primary && dedicated) {
+    if (!primary.cdpVerified) {
+      return {
+        ok: true,
+        provider: 'local',
+        browser: dedicated.browserMode,
+        browserId: dedicated.browserId,
+        dedicatedProfileDir: dedicated.dedicatedProfileDir,
+        port: dedicated.port,
+        availableModes,
+        selectedBecause: 'primary_requires_confirmation_fallback_to_dedicated',
+        local: dedicated,
+      };
+    }
     return {
       ok: true,
       provider: 'local',
@@ -74,6 +87,16 @@ export async function resolveRuntimeAvailability(config) {
     };
   }
   if (primary) {
+    if (!primary.cdpVerified) {
+      return {
+        ok: false,
+        provider: 'local',
+        reason: 'primary_requires_confirmation',
+        availableModes,
+        requestedMode: null,
+        guidance: '主力浏览器检测到 DevToolsActivePort，但未通过 /json/version 验证；请在主力浏览器确认远程调试授权，或启动 dedicated 浏览器。',
+      };
+    }
     return { ok: true, provider: 'local', browser: primary.browserMode, browserId: null, dedicatedProfileDir: null, port: primary.port, availableModes, selectedBecause: 'only_primary_available', local: primary };
   }
   if (dedicated) {
