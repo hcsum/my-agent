@@ -1,6 +1,6 @@
 ---
 name: handover
-description: Summarize the current conversation into a handover — key points, decisions, state, and next steps — for the user or a next session to pick up. Use when the user says handover / 交接 / 总结一下当前 / 做个 handover / hand off, or asks to wrap up where things stand. Summarizes the part the user names, or the whole current context by default. Output goes to the clipboard by default; write a file only when the user asks or the handover is clearly meant to be picked up later by another session. This is a running-context handover — for saving a reply verbatim use `brain-dump`, for durable agent facts use `remember`.
+description: Summarize the current conversation into a handover — key points, decisions, state, and next steps — for the user or a next session to pick up. Use when the user says handover / 交接 / 总结一下当前 / 做个 handover / hand off, or asks to wrap up where things stand. Summarizes the part the user names, or the whole current context by default. Output always goes to the clipboard; write a file only when the user explicitly asks for one. This is a running-context handover — for saving a reply verbatim use `brain-dump`, for durable agent facts use `remember`.
 ---
 
 Turn the current conversation into a handover: a tight brief of what was decided, where things stand, and what to do next — so the user or a fresh session can continue without re-reading the whole thread.
@@ -26,14 +26,10 @@ Keep it dense and skimmable. Prefer short bullets over prose. Keep code identifi
 
 ## Output destination
 
-Default to the **clipboard**. Write a **file** instead when either:
-- the user asks for a file (or names a path), or
-- the handover is clearly meant to be picked up later by another session/agent — multi-part, with file paths, commands, and a real next-step list — where a durable artifact beats a volatile clipboard.
-
-When it's a genuine toss-up, default to clipboard and mention a file is available.
+**Always the clipboard.** Never write a file unless the user explicitly asks for one (or names a path) — no matter how long, multi-part, or "durable-looking" the handover is. Don't offer a file either.
 
 - **Clipboard**: pipe the handover text to `pbcopy` (macOS). Report that it's on the clipboard plus a one-line description of what was copied.
-- **File**: default under `tmp/` at the project root (gitignored — not committed) with a short kebab-case name like `handover-<topic>-YYYY-MM-DD.md`, unless the user gives a path. Create `tmp/` if it doesn't exist. Report the path.
+- **File** (only on explicit request): default under `tmp/` at the project root (gitignored — not committed) with a short kebab-case name like `handover-<topic>-YYYY-MM-DD.md`, unless the user gives a path. Create `tmp/` if it doesn't exist. Report the path.
 
 ## Output
 
