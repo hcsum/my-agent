@@ -121,6 +121,11 @@ select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background
 h2.grp{margin:14px 0 2px;font-size:13px;font-weight:650;color:var(--muted);display:flex;gap:8px;align-items:center}
 h2.grp:first-child{margin-top:0}
 h2.grp span{font-weight:400;font-size:12px;opacity:.7}
+.edit{margin-top:9px;display:flex;gap:7px;align-items:center}
+.edit input{flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:13px}
+.edit button{border:1px solid var(--ok);background:var(--ok);color:#fff;padding:7px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
+.edit button:disabled{opacity:.55;cursor:wait}
+.editMsg{font-size:12px;color:var(--muted)}
 </style></head><body>
 <header>
   <h1>Backlink Board</h1>
@@ -158,6 +163,7 @@ const ALL="__all__",ALLPROJ="__allproj__";
 let scope=CAMPAIGNS.length?CAMPAIGN:CORE,proj=ALLPROJ,view="todo";
 const $=(id)=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const EDITABLE=location.protocol.startsWith("http")&&["127.0.0.1","localhost"].includes(location.hostname);
 const SCOPE_TO_QUERY={[CAMPAIGN]:"campaign",[CORE]:"core",[ALL]:"all",[GAP]:"gap"};
 const QUERY_TO_SCOPE={campaign:CAMPAIGN,core:CORE,all:ALL,gap:GAP};
 
@@ -315,12 +321,13 @@ const DECISION_LABEL={active:"做",needs_review:"待复查",rejected:"不做"};
 const ROBOTS_LABEL={indexable:"indexable",noindex:"noindex",blocked:"blocked",unknown:"robots unknown","":"robots unknown"};
 const PRICING_LABEL={free:"免费",paid:"付费",reciprocal:"互链",credits:"积分",freemium:"免费+付费"};
 
-// Which project a card is "about". A project tab sets it directly; the baseline
-// view sets it via its own picker. GAP and 全部项目 have no single subject.
-function lens(){return proj===ALLPROJ?null:proj;}
+// Which project a card is "about". A project tab sets it directly; campaign
+// cards pass exactly one project, so they can still be edited when the
+// top-level project filter is "全部项目".
+function lens(need){return proj!==ALLPROJ?proj:((need||[]).length===1?need[0]:null);}
 
 function card(d,need){
-  const f=lens();
+  const f=lens(need);
   const st=f?d.status[f]:"";
   const openNeed=(need||[]).filter(p=>!d.status[p]);
   const pendingNeed=(need||[]).filter(p=>d.status[p]);
@@ -344,6 +351,11 @@ function card(d,need){
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
   const link=st==="live"&&d.detail[f]?d.detail[f]:"https://"+d.website;
   const why=st&&st!=="live"&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
+  const edit=f&&EDITABLE?\`<form class="edit" data-website="\${esc(d.website)}" data-project="\${esc(f)}" onsubmit="return savePlacement(event)">
+      <input name="url" type="url" value="\${esc(d.detail[f]||"")}" placeholder="粘贴 live placement URL" required>
+      <button type="submit">\${st==="live"?"更新 live":"标记 live"}</button>
+      <span class="editMsg"></span>
+    </form>\`:"";
   return \`<div class="row \${st==="live"&&view!=="done"?"done":""}">
     <div class="top">
       <a class="site" href="\${esc(link)}" target="_blank" rel="noopener">\${esc(d.website)}</a>
@@ -366,8 +378,34 @@ function card(d,need){
         :\`<span class="tag \${s==="parked"?"hard":""}">\${label}</span>\`;
     }).join("")}</div>\`:""}
     \${why}
+    \${edit}
     \${d.note?\`<div class="note clip" onclick="this.classList.toggle('clip')">\${esc(d.note)}</div>\`:""}
   </div>\`;
+}
+
+async function savePlacement(event){
+  event.preventDefault();
+  const form=event.currentTarget;
+  const button=form.querySelector("button");
+  const msg=form.querySelector(".editMsg");
+  const url=form.elements.url.value.trim();
+  button.disabled=true;
+  msg.textContent="保存中…";
+  try{
+    const res=await fetch("/api/placements",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({
+      website:form.dataset.website,
+      project:form.dataset.project,
+      url
+    })});
+    const json=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(json.error||"保存失败");
+    msg.textContent="已保存";
+    location.reload();
+  }catch(err){
+    msg.textContent=err.message||"保存失败";
+    button.disabled=false;
+  }
+  return false;
 }
 loadStateFromUrl();
 render();
