@@ -105,6 +105,8 @@ a.tag{text-decoration:none;cursor:pointer}
 a.tag:hover{border-color:var(--acc);color:var(--acc)}
 .note{margin-top:7px;font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
 .note.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.meta{margin-top:6px;font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.meta b{font-weight:500;color:var(--fg)}
 .empty{color:var(--muted);font-size:14px;padding:20px 0}
 select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font-size:13px}
 .tab.gap[aria-selected=true]{background:var(--ok);border-color:var(--ok)}
@@ -308,6 +310,7 @@ const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unve
 const INDEX_LABEL={indexed:"Google indexed",not_found:"site: 未发现",gsc_seen:"GSC seen",unverified:"未查收录"};
 const DECISION_LABEL={active:"做",needs_review:"待复查",rejected:"不做"};
 const ROBOTS_LABEL={indexable:"indexable",noindex:"noindex",blocked:"blocked",unknown:"robots unknown","":"robots unknown"};
+const PRICING_LABEL={free:"免费",paid:"付费",reciprocal:"互链",credits:"积分",freemium:"免费+付费"};
 
 // Which project a card is "about". A project tab sets it directly; the baseline
 // view sets it via its own picker. GAP and 全部项目 have no single subject.
@@ -330,8 +333,18 @@ function card(d,need){
   const decisionBadge=\`<span class="tag \${d.decision==="active"?"ok":""}" title="\${esc(d.reason)}">\${DECISION_LABEL[d.decision]||esc(d.decision)}</span>\`;
   const relBadge=d.linkRel?\`<span class="tag \${d.linkRel==="dofollow"?"ok":""}" title="\${esc(d.linkChecked)}">rel: \${esc(d.linkRel)}</span>\`:"";
   const robotsBadge=d.linkRobots?\`<span class="tag \${d.linkRobots==="indexable"?"ok":"hard"}" title="\${esc(d.linkChecked)}">\${ROBOTS_LABEL[d.linkRobots]||esc(d.linkRobots)}</span>\`:"";
-  const typeBadge=d.typePrimary||d.typeSurface?\`<span class="tag">\${esc([d.typePrimary,d.typeSurface].filter(Boolean).join(" / "))}</span>\`:"";
-  const pricingBadge=d.pricingModel?\`<span class="tag" title="\${esc(d.pricingNote)}">\${esc(d.pricingModel)}</span>\`:"";
+  const typeText=[d.typePrimary,d.typeSurface].filter(v=>v&&v!=="unknown").join(" / ");
+  const typeBadge=typeText?\`<span class="tag">\${esc(typeText)}</span>\`:"";
+  const pricingText=d.pricingModel&&d.pricingModel!=="unknown"?(PRICING_LABEL[d.pricingModel]||d.pricingModel):"";
+  const pricingBadge=pricingText?\`<span class="tag">\${esc(pricingText)}</span>\`:"";
+  const meta=[
+    d.reason?\`<span><b>判断</b>：\${esc(d.reason)}</span>\`:"",
+    typeText?\`<span><b>类型</b>：\${esc(typeText)}</span>\`:"",
+    pricingText?\`<span><b>成本</b>：\${esc(pricingText)}\${d.pricingNote?\`，\${esc(d.pricingNote)}\`:""}</span>\`:"",
+    d.linkRel?\`<span><b>rel</b>：\${esc(d.linkRel)}</span>\`:"",
+    d.linkRobots?\`<span><b>robots</b>：\${esc(d.linkRobots)}</span>\`:"",
+    idxStatus?\`<span><b>Google</b>：\${esc(INDEX_LABEL[idxStatus]||idxStatus)}\${d.indexChecked[f]?\`（\${esc(d.indexChecked[f])}）\`:""}</span>\`:"",
+  ].filter(Boolean).join("");
   const evidence=self+" "+PROJECTS.filter(p=>p!==f&&d.status[p]==="live"&&d.detail[p])
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
   const link=st==="live"&&d.detail[f]?d.detail[f]:"https://"+d.website;
@@ -350,7 +363,7 @@ function card(d,need){
       \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 live 1×</span>':""}
       \${evidence}
     </div>
-    \${d.reason?\`<div class="note">\${esc(d.reason)}</div>\`:""}
+    \${meta?\`<div class="meta">\${meta}</div>\`:""}
     \${openNeed.length?\`<div class="need">还差：\${openNeed.map(p=>\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`).join("")}</div>\`:""}
     \${pendingNeed.length?\`<div class="need">审核中：\${pendingNeed.map(p=>{
       const s=d.status[p], u=d.detail[p], label=\`\${esc(p.split("/")[0])} \${LABEL[s]||s}\`;
