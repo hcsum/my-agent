@@ -60,9 +60,10 @@ function placementFor(site, project) {
   return (site.placements || []).find((placement) => placement.project === project) || {};
 }
 
-// "tier" = on how many projects this domain has a *live* link. Only `live`
-// counts — parked/reviewing/unverified are explicitly not proof it works.
-for (const d of data) d.tier = projects.filter((p) => d.status[p] === "live").length;
+// "tier" = on how many projects this domain has a verified link. Legacy `live`
+// is treated as verified until the source data is migrated.
+const verifiedStatus = (status) => status === "verified" || status === "live";
+for (const d of data) d.tier = projects.filter((p) => verifiedStatus(d.status[p])).length;
 // Sub-page targets (contain "/") aren't separate sites; gaps are tracked per real project.
 const mainProjects = projects.filter((p) => !p.includes("/"));
 
@@ -221,6 +222,7 @@ function saveStateToUrl(){
 // report links from pages Google crawled but refused to keep in the main index.
 // site: not_found is still weak negative, but GSC seen is not an index signal.
 const WORTH=["dofollow","nofollow"];
+const verifiedStatus=status=>status==="verified"||status==="live";
 const inCore=d=>d.decision==="active"&&WORTH.includes(d.linkRel)&&d.linkRobots==="indexable";
 const campaignLabel=p=>p==="onethingatatime.app"?"OneThing":p==="perlerbeadpatterns.org"?"PerlerBeads":p.split(".")[0];
 
@@ -243,30 +245,30 @@ function render(){
   else{
     pool=pool.filter(d=>d.tier>=+$("tier").value);
     // 补齐缺口 = domains already proven on ≥2 projects that some project still lacks.
-    if(scope===GAP) pool=pool.filter(d=>MAIN.some(p=>d.status[p]!=="live"));
+    if(scope===GAP) pool=pool.filter(d=>MAIN.some(p=>!verifiedStatus(d.status[p])));
   }
 
   // --- Level 2: project ---
   const one=proj!==ALLPROJ;
   const scoped=one?[proj]:MAIN;
-  const isDone=d=>scoped.every(p=>d.status[p]==="live");
-  const need=d=>scoped.filter(p=>d.status[p]!=="live");
+  const isDone=d=>scoped.every(p=>verifiedStatus(d.status[p]));
+  const need=d=>scoped.filter(p=>!verifiedStatus(d.status[p]));
 
   // Progress counts slots (domain × project), and only dofollow ones — padding
   // the denominator with nofollow targets overstates real coverage.
   const scored=pool.filter(d=>scope!==CORE||d.linkRel==="dofollow");
   const total=scored.length*scoped.length;
-  const live=scored.reduce((n,d)=>n+scoped.filter(p=>d.status[p]==="live").length,0);
+  const live=scored.reduce((n,d)=>n+scoped.filter(p=>verifiedStatus(d.status[p])).length,0);
   $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
   const extra=pool.length-scored.length;
   // Say how many domains, then how far each project has got. The slot arithmetic
   // ("15 × 3 = 45 个位置") is noise - nobody acts on the product.
-  const done=p=>scored.filter(d=>d.status[p]==="live").length;
+  const done=p=>scored.filter(d=>verifiedStatus(d.status[p])).length;
   const open=p=>scored.filter(d=>!d.status[p]).length;
-  const pending=p=>scored.filter(d=>d.status[p]&&d.status[p]!=="live").length;
+  const pending=p=>scored.filter(d=>d.status[p]&&!verifiedStatus(d.status[p])).length;
   $("count").textContent=\`\${scope===CORE?"🏆 保底名单":scope===GAP?"🎯 补齐缺口":"📋 全部域名"} \${scored.length} 个域名\`
     +(extra?\`（另有 \${extra} 个 nofollow，顺手做）\`:"")+"｜"
-    +(one?\`\${proj} 已发 \${live}，待发 \${open(proj)}\${pending(proj)?\`，审核中 \${pending(proj)}\`:""}\`
+    +(one?\`\${proj} 已验证 \${live}，待发 \${open(proj)}\${pending(proj)?\`，待复查 \${pending(proj)}\`:""}\`
         :MAIN.map(p=>\`\${p.split(".")[0]} \${done(p)}\`).join(" · "));
 
   // --- Level 3: 待发 / 已发 / 全部 ---
@@ -292,9 +294,9 @@ function renderCampaign(pool){
     const project=c.project;
     const campaignId=c.id||project;
     const target=c.target_live||5;
-    const completed=eligible.filter(d=>d.status[project]==="live"&&d.campaignId[project]===campaignId);
-    const historical=eligible.filter(d=>d.status[project]==="live"&&d.campaignId[project]!==campaignId);
-    const pending=pool.filter(d=>d.status[project]&&d.status[project]!=="live");
+    const completed=eligible.filter(d=>verifiedStatus(d.status[project])&&d.campaignId[project]===campaignId);
+    const historical=eligible.filter(d=>verifiedStatus(d.status[project])&&d.campaignId[project]!==campaignId);
+    const pending=pool.filter(d=>d.status[project]&&!verifiedStatus(d.status[project]));
     const ready=eligible.filter(d=>!d.status[project]);
     const review=pool.filter(d=>d.decision==="needs_review"&&!d.status[project]);
     const needCount=Math.max(0,target-completed.length);
@@ -303,7 +305,7 @@ function renderCampaign(pool){
     return \`<section class="campaign">
       <div class="campaignHead">
         <h2>\${esc(campaignLabel(project))} <span class="campaignMeta">\${completed.length}/\${target} 本轮新增</span></h2>
-        <span class="campaignMeta">还差 \${needCount}；可直接做 \${ready.length}；待判断 \${review.length}；已发过 \${historical.length}；审核中 \${pending.length}</span>
+        <span class="campaignMeta">还差 \${needCount}；可直接做 \${ready.length}；待判断 \${review.length}；已验证过 \${historical.length}；待复查 \${pending.length}</span>
       </div>
       \${picks.length?picks.map(d=>card(d,[project])).join(""):\`<div class="empty">这个项目本轮新增已经达到 \${target} 个。</div>\`}
     </section>\`;
@@ -311,14 +313,14 @@ function renderCampaign(pool){
   const total=activeCampaigns.reduce((n,c)=>n+(c.target_live||5),0);
   const doneCount=activeCampaigns.reduce((n,c)=>{
     const id=c.id||c.project;
-    return n+Math.min(c.target_live||5,eligible.filter(d=>d.status[c.project]==="live"&&d.campaignId[c.project]===id).length);
+    return n+Math.min(c.target_live||5,eligible.filter(d=>verifiedStatus(d.status[c.project])&&d.campaignId[c.project]===id).length);
   },0);
   $("bar").style.width=(total?Math.round(doneCount/total*100):0)+"%";
   $("count").textContent=\`🎯 本轮目标\${proj===ALLPROJ?"":\`｜\${proj}\`}｜\${doneCount}/\${total} 本轮新增；只显示没发过的候选\`;
   $("list").innerHTML=blocks.join("")||'<div class="empty">这个项目没有 active campaign。</div>';
 }
 
-const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unverified:"❓ 待核实",nolink:"⚠️ 发了但没链接"};
+const LABEL={submitted:"🟡 已提交",verified:"✅ 已验证",live:"✅ 已验证",reviewing:"🟡 已提交",parked:"⛔ 卡住",unverified:"❓ 待核实",nolink:"⚠️ 发了但没链接"};
 const INDEX_LABEL={indexed:"Google indexed",not_found:"site: 未发现",gsc_seen:"GSC discovered",unverified:"未查收录"};
 const DECISION_LABEL={active:"做",needs_review:"待复查",rejected:"不做"};
 const ROBOTS_LABEL={indexable:"indexable",noindex:"noindex",blocked:"blocked",unknown:"robots unknown","":"robots unknown"};
@@ -337,7 +339,7 @@ function card(d,need){
   // Live links on other projects double as the how-to reference for this domain.
   // The current project's own link must come first and be marked, otherwise the
   // done view shows only *other* projects and reads as "mine is missing".
-  const self=st==="live"&&d.detail[f]
+  const self=verifiedStatus(st)&&d.detail[f]
     ?\`<a class="tag mine" href="\${esc(d.detail[f])}" target="_blank" rel="noopener">\${esc(f.split("/")[0])} ↗ 本项目</a>\`:"";
   const idxStatus=f?d.indexStatus[f]:"";
   const indexBadge=idxStatus
@@ -350,16 +352,16 @@ function card(d,need){
   const typeBadge=typeText?\`<span class="tag">\${esc(typeText)}</span>\`:"";
   const pricingText=d.pricingModel&&d.pricingModel!=="unknown"?(PRICING_LABEL[d.pricingModel]||d.pricingModel):"";
   const pricingBadge=pricingText?\`<span class="tag">\${esc(pricingText)}</span>\`:"";
-  const evidence=self+" "+PROJECTS.filter(p=>p!==f&&d.status[p]==="live"&&d.detail[p])
+  const evidence=self+" "+PROJECTS.filter(p=>p!==f&&verifiedStatus(d.status[p])&&d.detail[p])
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
-  const link=st==="live"&&d.detail[f]?d.detail[f]:"https://"+d.website;
-  const why=st&&st!=="live"&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
+  const link=verifiedStatus(st)&&d.detail[f]?d.detail[f]:"https://"+d.website;
+  const why=st&&!verifiedStatus(st)&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
   const reviewMeta=f&&d.submittedAt[f]?\`<div class="note">已发：\${esc(d.submittedAt[f])}\${d.followUpAt[f]?\`；复查：\${esc(d.followUpAt[f])}\`:""}</div>\`:"";
   const edit=f&&EDITABLE?\`<form class="edit" data-website="\${esc(d.website)}" data-project="\${esc(f)}" onsubmit="return savePlacement(event)">
-      <input name="url" type="url" value="\${esc(d.detail[f]||"")}" placeholder="粘贴 live placement URL" required>
+      <input name="url" type="url" value="\${esc(d.detail[f]||"")}" placeholder="粘贴 placement URL" required>
       <select name="status" aria-label="placement status">
-        <option value="reviewing" \${st!=="live"?"selected":""}>已发待审核</option>
-        <option value="live" \${st==="live"?"selected":""}>已通过 live</option>
+        <option value="submitted" \${!verifiedStatus(st)?"selected":""}>已提交待复查</option>
+        <option value="verified" \${verifiedStatus(st)?"selected":""}>复查通过</option>
       </select>
       <select name="reviewAfterDays" aria-label="review after">
         <option value="14">两周后复查</option>
@@ -368,7 +370,7 @@ function card(d,need){
       <button type="submit">保存</button>
       <span class="editMsg"></span>
     </form>\`:"";
-  return \`<div class="row \${st==="live"&&view!=="done"?"done":""}">
+  return \`<div class="row \${verifiedStatus(st)&&view!=="done"?"done":""}">
     <div class="top">
       <a class="site" href="\${esc(link)}" target="_blank" rel="noopener">\${esc(d.website)}</a>
       \${decisionBadge}
@@ -379,11 +381,11 @@ function card(d,need){
       \${relBadge}
       \${robotsBadge}
       \${d.dr!=null?\`<span class="dr">DR \${d.dr}</span>\`:""}
-      \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 live 1×</span>':""}
+      \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 验证 1×</span>':""}
       \${evidence}
     </div>
     \${openNeed.length?\`<div class="need">还差：\${openNeed.map(p=>\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`).join("")}</div>\`:""}
-    \${pendingNeed.length?\`<div class="need">审核中：\${pendingNeed.map(p=>{
+    \${pendingNeed.length?\`<div class="need">待复查：\${pendingNeed.map(p=>{
       const s=d.status[p], u=d.detail[p], label=\`\${esc(p.split("/")[0])} \${LABEL[s]||s}\`;
       return u
         ?\`<a class="tag \${s==="parked"?"hard":""}" href="\${esc(u)}" target="_blank" rel="noopener" title="打开审核页">\${label} ↗</a>\`

@@ -44,11 +44,11 @@ function addDays(date, days) {
   return next;
 }
 
-function savePlacement({ website, project, url, status = "reviewing", reviewAfterDays = 14 }) {
+function savePlacement({ website, project, url, status = "submitted", reviewAfterDays = 14 }) {
   if (!website || typeof website !== "string") throw new Error("missing website");
   if (!project || typeof project !== "string") throw new Error("missing project");
   if (!url || typeof url !== "string") throw new Error("missing url");
-  if (!["reviewing", "live"].includes(status)) throw new Error("status must be reviewing or live");
+  if (!["submitted", "verified"].includes(status)) throw new Error("status must be submitted or verified");
   const days = Number(reviewAfterDays);
   if (![14, 30].includes(days)) throw new Error("reviewAfterDays must be 14 or 30");
   const parsedUrl = new URL(url);
@@ -71,12 +71,12 @@ function savePlacement({ website, project, url, status = "reviewing", reviewAfte
   const campaignId = activeCampaignId(master, project);
   if (campaignId) placement.campaign_id = campaignId;
   placement.index = { status: "unverified" };
-  if (status === "reviewing") {
+  if (status === "submitted") {
     const now = new Date();
     placement.submitted_at = localDate(now);
     placement.follow_up_at = localDate(addDays(now, days));
   } else {
-    placement.live_at = localDate();
+    placement.verified_at = localDate();
     delete placement.follow_up_at;
   }
 
