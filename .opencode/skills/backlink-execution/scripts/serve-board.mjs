@@ -38,21 +38,11 @@ function localDate(date = new Date()) {
   }).format(date);
 }
 
-function addDays(date, days) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function savePlacement({ website, project, url, status = "submitted", reviewAfterDays = 14 }) {
+function savePlacement({ website, project, url = "", submitted }) {
   if (!website || typeof website !== "string") throw new Error("missing website");
   if (!project || typeof project !== "string") throw new Error("missing project");
-  if (!url || typeof url !== "string") throw new Error("missing url");
-  if (!["submitted", "verified"].includes(status)) throw new Error("status must be submitted or verified");
-  const days = Number(reviewAfterDays);
-  if (![14, 30].includes(days)) throw new Error("reviewAfterDays must be 14 or 30");
-  const parsedUrl = new URL(url);
-  if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("url must be http(s)");
+  if (!submitted) throw new Error("placement is not marked submitted");
+  if (typeof url !== "string") throw new Error("url must be a string");
 
   const master = readMaster();
   if (!Array.isArray(master.websites)) throw new Error("master.websites is missing");
@@ -66,19 +56,14 @@ function savePlacement({ website, project, url, status = "submitted", reviewAfte
     placement = { project, index: {} };
     site.placements.push(placement);
   }
-  placement.status = status;
-  placement.url = parsedUrl.toString();
+  placement.status = "submitted";
+  if (url.trim()) placement.url = url.trim();
+  else delete placement.url;
   const campaignId = activeCampaignId(master, project);
   if (campaignId) placement.campaign_id = campaignId;
   placement.index = { status: "unverified" };
-  if (status === "submitted") {
-    const now = new Date();
-    placement.submitted_at = localDate(now);
-    placement.follow_up_at = localDate(addDays(now, days));
-  } else {
-    placement.verified_at = localDate();
-    delete placement.follow_up_at;
-  }
+  placement.submitted_at = localDate();
+  delete placement.follow_up_at;
 
   writeMaster(master);
   execFileSync(process.execPath, [BUILD], { cwd: repo, stdio: "pipe" });

@@ -60,10 +60,10 @@ function placementFor(site, project) {
   return (site.placements || []).find((placement) => placement.project === project) || {};
 }
 
-// "tier" = on how many projects this domain has a verified link. Legacy `live`
-// is treated as verified until the source data is migrated.
-const verifiedStatus = (status) => status === "verified" || status === "live";
-for (const d of data) d.tier = projects.filter((p) => verifiedStatus(d.status[p])).length;
+// "tier" = on how many projects this domain has already been used. This is a
+// placement-attempt signal; Google indexing stays on the separate index axis.
+const placedStatus = (status) => ["submitted", "reviewing", "verified", "live"].includes(status);
+for (const d of data) d.tier = projects.filter((p) => placedStatus(d.status[p])).length;
 // Sub-page targets (contain "/") aren't separate sites; gaps are tracked per real project.
 const mainProjects = projects.filter((p) => !p.includes("/"));
 
@@ -125,7 +125,9 @@ h2.grp{margin:14px 0 2px;font-size:13px;font-weight:650;color:var(--muted);displ
 h2.grp:first-child{margin-top:0}
 h2.grp span{font-weight:400;font-size:12px;opacity:.7}
 .edit{margin-top:9px;display:flex;gap:7px;align-items:center}
-.edit input{flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:13px}
+.edit .check{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--fg);white-space:nowrap}
+.edit .check input{margin:0}
+.edit input[name=url]{flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:13px}
 .edit select{padding:7px 8px;font-size:13px;background:var(--bg)}
 .edit button{border:1px solid var(--ok);background:var(--ok);color:#fff;padding:7px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
 .edit button:disabled{opacity:.55;cursor:wait}
@@ -138,7 +140,7 @@ h2.grp span{font-weight:400;font-size:12px;opacity:.7}
   <div class="bar">
     <input type="search" id="q" placeholder="搜索域名 / reason / note…">
     <select id="tier">
-      <option value="2">✅ 已验证（≥2 个项目发成功过）</option>
+      <option value="2">✅ 已发过（≥2 个项目）</option>
       <option value="1">🟡 用过一次（≥1 个项目）</option>
       <option value="0" selected>全部（含从未发过的）</option>
     </select>
@@ -222,7 +224,7 @@ function saveStateToUrl(){
 // report links from pages Google crawled but refused to keep in the main index.
 // site: not_found is still weak negative, but GSC seen is not an index signal.
 const WORTH=["dofollow","nofollow"];
-const verifiedStatus=status=>status==="verified"||status==="live";
+const placedStatus=status=>["submitted","reviewing","verified","live"].includes(status);
 const inCore=d=>d.decision==="active"&&WORTH.includes(d.linkRel)&&d.linkRobots==="indexable";
 const campaignLabel=p=>p==="onethingatatime.app"?"OneThing":p==="perlerbeadpatterns.org"?"PerlerBeads":p.split(".")[0];
 
@@ -245,30 +247,30 @@ function render(){
   else{
     pool=pool.filter(d=>d.tier>=+$("tier").value);
     // 补齐缺口 = domains already proven on ≥2 projects that some project still lacks.
-    if(scope===GAP) pool=pool.filter(d=>MAIN.some(p=>!verifiedStatus(d.status[p])));
+    if(scope===GAP) pool=pool.filter(d=>MAIN.some(p=>!placedStatus(d.status[p])));
   }
 
   // --- Level 2: project ---
   const one=proj!==ALLPROJ;
   const scoped=one?[proj]:MAIN;
-  const isDone=d=>scoped.every(p=>verifiedStatus(d.status[p]));
-  const need=d=>scoped.filter(p=>!verifiedStatus(d.status[p]));
+  const isDone=d=>scoped.every(p=>placedStatus(d.status[p]));
+  const need=d=>scoped.filter(p=>!placedStatus(d.status[p]));
 
   // Progress counts slots (domain × project), and only dofollow ones — padding
   // the denominator with nofollow targets overstates real coverage.
   const scored=pool.filter(d=>scope!==CORE||d.linkRel==="dofollow");
   const total=scored.length*scoped.length;
-  const live=scored.reduce((n,d)=>n+scoped.filter(p=>verifiedStatus(d.status[p])).length,0);
-  $("bar").style.width=(total?Math.round(live/total*100):0)+"%";
+  const placed=scored.reduce((n,d)=>n+scoped.filter(p=>placedStatus(d.status[p])).length,0);
+  $("bar").style.width=(total?Math.round(placed/total*100):0)+"%";
   const extra=pool.length-scored.length;
   // Say how many domains, then how far each project has got. The slot arithmetic
   // ("15 × 3 = 45 个位置") is noise - nobody acts on the product.
-  const done=p=>scored.filter(d=>verifiedStatus(d.status[p])).length;
+  const done=p=>scored.filter(d=>placedStatus(d.status[p])).length;
   const open=p=>scored.filter(d=>!d.status[p]).length;
-  const pending=p=>scored.filter(d=>d.status[p]&&!verifiedStatus(d.status[p])).length;
+  const pending=p=>scored.filter(d=>placedStatus(d.status[p])&&d.indexStatus[p]==="unverified").length;
   $("count").textContent=\`\${scope===CORE?"🏆 保底名单":scope===GAP?"🎯 补齐缺口":"📋 全部域名"} \${scored.length} 个域名\`
     +(extra?\`（另有 \${extra} 个 nofollow，顺手做）\`:"")+"｜"
-    +(one?\`\${proj} 已验证 \${live}，待发 \${open(proj)}\${pending(proj)?\`，待复查 \${pending(proj)}\`:""}\`
+    +(one?\`\${proj} 已发 \${placed}，待发 \${open(proj)}\${pending(proj)?\`，待查收录 \${pending(proj)}\`:""}\`
         :MAIN.map(p=>\`\${p.split(".")[0]} \${done(p)}\`).join(" · "));
 
   // --- Level 3: 待发 / 已发 / 全部 ---
@@ -294,9 +296,9 @@ function renderCampaign(pool){
     const project=c.project;
     const campaignId=c.id||project;
     const target=c.target_live||5;
-    const completed=eligible.filter(d=>verifiedStatus(d.status[project])&&d.campaignId[project]===campaignId);
-    const historical=eligible.filter(d=>verifiedStatus(d.status[project])&&d.campaignId[project]!==campaignId);
-    const pending=pool.filter(d=>d.status[project]&&!verifiedStatus(d.status[project]));
+    const completed=eligible.filter(d=>placedStatus(d.status[project])&&d.campaignId[project]===campaignId);
+    const historical=eligible.filter(d=>placedStatus(d.status[project])&&d.campaignId[project]!==campaignId);
+    const pending=pool.filter(d=>placedStatus(d.status[project])&&d.indexStatus[project]==="unverified");
     const ready=eligible.filter(d=>!d.status[project]);
     const review=pool.filter(d=>d.decision==="needs_review"&&!d.status[project]);
     const needCount=Math.max(0,target-completed.length);
@@ -305,7 +307,7 @@ function renderCampaign(pool){
     return \`<section class="campaign">
       <div class="campaignHead">
         <h2>\${esc(campaignLabel(project))} <span class="campaignMeta">\${completed.length}/\${target} 本轮新增</span></h2>
-        <span class="campaignMeta">还差 \${needCount}；可直接做 \${ready.length}；待判断 \${review.length}；已验证过 \${historical.length}；待复查 \${pending.length}</span>
+        <span class="campaignMeta">还差 \${needCount}；可直接做 \${ready.length}；待判断 \${review.length}；已发过 \${historical.length}；待查收录 \${pending.length}</span>
       </div>
       \${picks.length?picks.map(d=>card(d,[project])).join(""):\`<div class="empty">这个项目本轮新增已经达到 \${target} 个。</div>\`}
     </section>\`;
@@ -313,7 +315,7 @@ function renderCampaign(pool){
   const total=activeCampaigns.reduce((n,c)=>n+(c.target_live||5),0);
   const doneCount=activeCampaigns.reduce((n,c)=>{
     const id=c.id||c.project;
-    return n+Math.min(c.target_live||5,eligible.filter(d=>verifiedStatus(d.status[c.project])&&d.campaignId[c.project]===id).length);
+    return n+Math.min(c.target_live||5,eligible.filter(d=>placedStatus(d.status[c.project])&&d.campaignId[c.project]===id).length);
   },0);
   $("bar").style.width=(total?Math.round(doneCount/total*100):0)+"%";
   $("count").textContent=\`🎯 本轮目标\${proj===ALLPROJ?"":\`｜\${proj}\`}｜\${doneCount}/\${total} 本轮新增；只显示没发过的候选\`;
@@ -334,12 +336,12 @@ function lens(need){return proj!==ALLPROJ?proj:((need||[]).length===1?need[0]:nu
 function card(d,need){
   const f=lens(need);
   const st=f?d.status[f]:"";
-  const openNeed=(need||[]).filter(p=>!d.status[p]);
-  const pendingNeed=(need||[]).filter(p=>d.status[p]);
-  // Live links on other projects double as the how-to reference for this domain.
+  const openNeed=(need||[]).filter(p=>!placedStatus(d.status[p]));
+  const pendingNeed=(need||[]).filter(p=>placedStatus(d.status[p])&&d.indexStatus[p]==="unverified");
+  // Placed links on other projects double as the how-to reference for this domain.
   // The current project's own link must come first and be marked, otherwise the
   // done view shows only *other* projects and reads as "mine is missing".
-  const self=verifiedStatus(st)&&d.detail[f]
+  const self=placedStatus(st)&&d.detail[f]
     ?\`<a class="tag mine" href="\${esc(d.detail[f])}" target="_blank" rel="noopener">\${esc(f.split("/")[0])} ↗ 本项目</a>\`:"";
   const idxStatus=f?d.indexStatus[f]:"";
   const indexBadge=idxStatus
@@ -352,25 +354,18 @@ function card(d,need){
   const typeBadge=typeText?\`<span class="tag">\${esc(typeText)}</span>\`:"";
   const pricingText=d.pricingModel&&d.pricingModel!=="unknown"?(PRICING_LABEL[d.pricingModel]||d.pricingModel):"";
   const pricingBadge=pricingText?\`<span class="tag">\${esc(pricingText)}</span>\`:"";
-  const evidence=self+" "+PROJECTS.filter(p=>p!==f&&verifiedStatus(d.status[p])&&d.detail[p])
+  const evidence=self+" "+PROJECTS.filter(p=>p!==f&&placedStatus(d.status[p])&&d.detail[p])
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
-  const link=verifiedStatus(st)&&d.detail[f]?d.detail[f]:"https://"+d.website;
-  const why=st&&!verifiedStatus(st)&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
-  const reviewMeta=f&&d.submittedAt[f]?\`<div class="note">已发：\${esc(d.submittedAt[f])}\${d.followUpAt[f]?\`；复查：\${esc(d.followUpAt[f])}\`:""}</div>\`:"";
+  const link=placedStatus(st)&&d.detail[f]?d.detail[f]:"https://"+d.website;
+  const why=st&&!placedStatus(st)&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
+  const reviewMeta=f&&d.submittedAt[f]?\`<div class="note">已发时间：\${esc(d.submittedAt[f])}</div>\`:"";
   const edit=f&&EDITABLE?\`<form class="edit" data-website="\${esc(d.website)}" data-project="\${esc(f)}" onsubmit="return savePlacement(event)">
-      <input name="url" type="url" value="\${esc(d.detail[f]||"")}" placeholder="粘贴 placement URL" required>
-      <select name="status" aria-label="placement status">
-        <option value="submitted" \${!verifiedStatus(st)?"selected":""}>已提交待复查</option>
-        <option value="verified" \${verifiedStatus(st)?"selected":""}>复查通过</option>
-      </select>
-      <select name="reviewAfterDays" aria-label="review after">
-        <option value="14">两周后复查</option>
-        <option value="30">一个月后复查</option>
-      </select>
+      <label class="check"><input name="submitted" type="checkbox" \${placedStatus(st)?"checked":""}> 已发</label>
+      <input name="url" type="text" value="\${esc(d.detail[f]||"")}" placeholder="外链 URL（可选）">
       <button type="submit">保存</button>
       <span class="editMsg"></span>
     </form>\`:"";
-  return \`<div class="row \${verifiedStatus(st)&&view!=="done"?"done":""}">
+  return \`<div class="row \${placedStatus(st)&&view!=="done"?"done":""}">
     <div class="top">
       <a class="site" href="\${esc(link)}" target="_blank" rel="noopener">\${esc(d.website)}</a>
       \${decisionBadge}
@@ -381,11 +376,11 @@ function card(d,need){
       \${relBadge}
       \${robotsBadge}
       \${d.dr!=null?\`<span class="dr">DR \${d.dr}</span>\`:""}
-      \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 验证 1×</span>':""}
+      \${d.tier>=2?\`<span class="tier">✅ 已发 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 已发 1×</span>':""}
       \${evidence}
     </div>
     \${openNeed.length?\`<div class="need">还差：\${openNeed.map(p=>\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`).join("")}</div>\`:""}
-    \${pendingNeed.length?\`<div class="need">待复查：\${pendingNeed.map(p=>{
+    \${pendingNeed.length?\`<div class="need">待查收录：\${pendingNeed.map(p=>{
       const s=d.status[p], u=d.detail[p], label=\`\${esc(p.split("/")[0])} \${LABEL[s]||s}\`;
       return u
         ?\`<a class="tag \${s==="parked"?"hard":""}" href="\${esc(u)}" target="_blank" rel="noopener" title="打开审核页">\${label} ↗</a>\`
@@ -411,8 +406,7 @@ async function savePlacement(event){
       website:form.dataset.website,
       project:form.dataset.project,
       url,
-      status:form.elements.status.value,
-      reviewAfterDays:Number(form.elements.reviewAfterDays.value)
+      submitted:form.elements.submitted.checked
     })});
     const json=await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(json.error||"保存失败");
