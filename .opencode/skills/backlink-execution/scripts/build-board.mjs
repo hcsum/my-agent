@@ -49,6 +49,8 @@ const data = records.map((r) => ({
   status: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).status || ""])),
   detail: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).url || placementFor(r, p).detail || ""])),
   campaignId: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).campaign_id || ""])),
+  submittedAt: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).submitted_at || ""])),
+  followUpAt: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).follow_up_at || ""])),
   indexStatus: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).index?.status || ""])),
   indexChecked: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).index?.checked_at || ""])),
   indexSource: Object.fromEntries(projects.map((p) => [p, placementFor(r, p).index?.source || ""])),
@@ -123,6 +125,7 @@ h2.grp:first-child{margin-top:0}
 h2.grp span{font-weight:400;font-size:12px;opacity:.7}
 .edit{margin-top:9px;display:flex;gap:7px;align-items:center}
 .edit input{flex:1;min-width:180px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-size:13px}
+.edit select{padding:7px 8px;font-size:13px;background:var(--bg)}
 .edit button{border:1px solid var(--ok);background:var(--ok);color:#fff;padding:7px 10px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap}
 .edit button:disabled{opacity:.55;cursor:wait}
 .editMsg{font-size:12px;color:var(--muted)}
@@ -351,9 +354,18 @@ function card(d,need){
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
   const link=st==="live"&&d.detail[f]?d.detail[f]:"https://"+d.website;
   const why=st&&st!=="live"&&d.detail[f]?\`<div class="note">\${LABEL[st]||st}：\${esc(d.detail[f])}</div>\`:"";
+  const reviewMeta=f&&d.submittedAt[f]?\`<div class="note">已发：\${esc(d.submittedAt[f])}\${d.followUpAt[f]?\`；复查：\${esc(d.followUpAt[f])}\`:""}</div>\`:"";
   const edit=f&&EDITABLE?\`<form class="edit" data-website="\${esc(d.website)}" data-project="\${esc(f)}" onsubmit="return savePlacement(event)">
       <input name="url" type="url" value="\${esc(d.detail[f]||"")}" placeholder="粘贴 live placement URL" required>
-      <button type="submit">\${st==="live"?"更新 live":"标记 live"}</button>
+      <select name="status" aria-label="placement status">
+        <option value="reviewing" \${st!=="live"?"selected":""}>已发待审核</option>
+        <option value="live" \${st==="live"?"selected":""}>已通过 live</option>
+      </select>
+      <select name="reviewAfterDays" aria-label="review after">
+        <option value="14">两周后复查</option>
+        <option value="30">一个月后复查</option>
+      </select>
+      <button type="submit">保存</button>
       <span class="editMsg"></span>
     </form>\`:"";
   return \`<div class="row \${st==="live"&&view!=="done"?"done":""}">
@@ -378,6 +390,7 @@ function card(d,need){
         :\`<span class="tag \${s==="parked"?"hard":""}">\${label}</span>\`;
     }).join("")}</div>\`:""}
     \${why}
+    \${reviewMeta}
     \${edit}
     \${d.note?\`<div class="note clip" onclick="this.classList.toggle('clip')">\${esc(d.note)}</div>\`:""}
   </div>\`;
@@ -395,7 +408,9 @@ async function savePlacement(event){
     const res=await fetch("/api/placements",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({
       website:form.dataset.website,
       project:form.dataset.project,
-      url
+      url,
+      status:form.elements.status.value,
+      reviewAfterDays:Number(form.elements.reviewAfterDays.value)
     })});
     const json=await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(json.error||"保存失败");

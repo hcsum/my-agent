@@ -29,10 +29,28 @@ function activeCampaignId(master, project) {
   return campaign?.id || "";
 }
 
-function savePlacement({ website, project, url }) {
+function localDate(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function savePlacement({ website, project, url, status = "reviewing", reviewAfterDays = 14 }) {
   if (!website || typeof website !== "string") throw new Error("missing website");
   if (!project || typeof project !== "string") throw new Error("missing project");
   if (!url || typeof url !== "string") throw new Error("missing url");
+  if (!["reviewing", "live"].includes(status)) throw new Error("status must be reviewing or live");
+  const days = Number(reviewAfterDays);
+  if (![14, 30].includes(days)) throw new Error("reviewAfterDays must be 14 or 30");
   const parsedUrl = new URL(url);
   if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("url must be http(s)");
 
@@ -48,15 +66,23 @@ function savePlacement({ website, project, url }) {
     placement = { project, index: {} };
     site.placements.push(placement);
   }
-  placement.status = "live";
+  placement.status = status;
   placement.url = parsedUrl.toString();
   const campaignId = activeCampaignId(master, project);
   if (campaignId) placement.campaign_id = campaignId;
   placement.index = { status: "unverified" };
+  if (status === "reviewing") {
+    const now = new Date();
+    placement.submitted_at = localDate(now);
+    placement.follow_up_at = localDate(addDays(now, days));
+  } else {
+    placement.live_at = localDate();
+    delete placement.follow_up_at;
+  }
 
   writeMaster(master);
   execFileSync(process.execPath, [BUILD], { cwd: repo, stdio: "pipe" });
-  return { ok: true, website, project, url: placement.url };
+  return { ok: true, website, project, url: placement.url, status: placement.status };
 }
 
 function send(res, status, body, headers = {}) {
