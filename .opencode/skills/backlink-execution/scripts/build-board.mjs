@@ -40,9 +40,9 @@ const data = records.map((r) => ({
   linkRel: r.link?.rel || "",
   linkRobots: r.link?.robots || "",
   linkChecked: r.link?.robots_checked_at || r.link?.rel_checked_at || "",
-  // Date Google Search Console itself reported a link from this domain, on any
-  // project. The only first-hand evidence there is — Semrush and `site:` both
-  // gave wrong answers on 2026-07-19 where GSC did not. Outranks `follow`.
+  // Date Google Search Console reported this referring domain. This proves
+  // Googlebot discovered the link, not that the placement page is indexed or
+  // passing meaningful ranking signal.
   gsc: r.gsc?.seen_at || "",
   dr: r.authority?.dr ?? null,
   note: r.note || "",
@@ -207,11 +207,10 @@ function saveStateToUrl(){
 }
 
 // Baseline admission = what we verified on the page ourselves: the anchor passes
-// value (dofollow, or nofollow for referral) AND the page is indexable (robots
-// checked, not noindex). GSC confirmation is a bonus badge, NOT the gate -
-// gating on it required a domain to already be placed *and* reported, so no new
-// target could ever enter the list a brand-new project is meant to be handed.
-// Absence from GSC is absence of evidence: wox.cc has 3 Semrush links, 0 in GSC.
+// value (dofollow, or nofollow for referral) AND the page allows indexing
+// (robots checked, not noindex). GSC is crawler-discovery evidence only: it can
+// report links from pages Google crawled but refused to keep in the main index.
+// site: not_found is still weak negative, but GSC seen is not an index signal.
 const WORTH=["dofollow","nofollow"];
 const inCore=d=>d.decision==="active"&&WORTH.includes(d.linkRel)&&d.linkRobots==="indexable";
 const campaignLabel=p=>p==="onethingatatime.app"?"OneThing":p==="perlerbeadpatterns.org"?"PerlerBeads":p.split(".")[0];
@@ -311,7 +310,7 @@ function renderCampaign(pool){
 }
 
 const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unverified:"❓ 待核实",nolink:"⚠️ 发了但没链接"};
-const INDEX_LABEL={indexed:"Google indexed",not_found:"site: 未发现",gsc_seen:"GSC seen",unverified:"未查收录"};
+const INDEX_LABEL={indexed:"Google indexed",not_found:"site: 未发现",gsc_seen:"GSC discovered",unverified:"未查收录"};
 const DECISION_LABEL={active:"做",needs_review:"待复查",rejected:"不做"};
 const ROBOTS_LABEL={indexable:"indexable",noindex:"noindex",blocked:"blocked",unknown:"robots unknown","":"robots unknown"};
 const PRICING_LABEL={free:"免费",paid:"付费",reciprocal:"互链",credits:"积分",freemium:"免费+付费"};
@@ -332,7 +331,7 @@ function card(d,need){
     ?\`<a class="tag mine" href="\${esc(d.detail[f])}" target="_blank" rel="noopener">\${esc(f.split("/")[0])} ↗ 本项目</a>\`:"";
   const idxStatus=f?d.indexStatus[f]:"";
   const indexBadge=idxStatus
-    ?\`<span class="tag \${idxStatus==="indexed"||idxStatus==="gsc_seen"?"ok":""}" title="\${esc(d.indexSource[f]||"")} \${esc(d.indexChecked[f]||"")}">\${INDEX_LABEL[idxStatus]||esc(idxStatus)}</span>\`
+    ?\`<span class="tag \${idxStatus==="indexed"?"ok":""}" title="\${esc(d.indexSource[f]||"")} \${esc(d.indexChecked[f]||"")}">\${INDEX_LABEL[idxStatus]||esc(idxStatus)}</span>\`
     :"";
   const decisionBadge=\`<span class="tag \${d.decision==="active"?"ok":""}" title="\${esc(d.reason)}">\${DECISION_LABEL[d.decision]||esc(d.decision)}</span>\`;
   const relBadge=d.linkRel?\`<span class="tag \${d.linkRel==="dofollow"?"ok":""}" title="\${esc(d.linkChecked)}">rel: \${esc(d.linkRel)}</span>\`:"";
@@ -351,7 +350,7 @@ function card(d,need){
       \${decisionBadge}
       \${typeBadge}
       \${pricingBadge}
-      \${d.gsc?\`<span class="tag gsc" title="Google Search Console 自己报告过来自这个域名的链接（\${esc(d.gsc)}）">🔎 GSC 确认</span>\`:""}
+      \${d.gsc?\`<span class="tag gsc" title="Google Search Console 报告过来自这个域名的链接（\${esc(d.gsc)}）；这说明 Googlebot 发现过链接，不等于 placement 页面已收录">🔎 GSC 发现</span>\`:""}
       \${indexBadge}
       \${relBadge}
       \${robotsBadge}
