@@ -279,7 +279,8 @@ function render(){
 
 function renderCampaign(pool){
   const eligible=pool.filter(inCore);
-  const blocks=CAMPAIGNS.filter(c=>c.status==="active").map(c=>{
+  const activeCampaigns=CAMPAIGNS.filter(c=>c.status==="active"&&(proj===ALLPROJ||c.project===proj));
+  const blocks=activeCampaigns.map(c=>{
     const project=c.project;
     const campaignId=c.id||project;
     const target=c.target_live||5;
@@ -299,14 +300,14 @@ function renderCampaign(pool){
       \${picks.length?picks.map(d=>card(d,[project])).join(""):\`<div class="empty">这个项目本轮新增已经达到 \${target} 个。</div>\`}
     </section>\`;
   });
-  const total=CAMPAIGNS.filter(c=>c.status==="active").reduce((n,c)=>n+(c.target_live||5),0);
-  const doneCount=CAMPAIGNS.filter(c=>c.status==="active").reduce((n,c)=>{
+  const total=activeCampaigns.reduce((n,c)=>n+(c.target_live||5),0);
+  const doneCount=activeCampaigns.reduce((n,c)=>{
     const id=c.id||c.project;
     return n+Math.min(c.target_live||5,eligible.filter(d=>d.status[c.project]==="live"&&d.campaignId[c.project]===id).length);
   },0);
   $("bar").style.width=(total?Math.round(doneCount/total*100):0)+"%";
-  $("count").textContent=\`🎯 本轮目标｜\${doneCount}/\${total} 本轮新增；只显示没发过的候选\`;
-  $("list").innerHTML=blocks.join("")||'<div class="empty">没有 active campaign。</div>';
+  $("count").textContent=\`🎯 本轮目标\${proj===ALLPROJ?"":\`｜\${proj}\`}｜\${doneCount}/\${total} 本轮新增；只显示没发过的候选\`;
+  $("list").innerHTML=blocks.join("")||'<div class="empty">这个项目没有 active campaign。</div>';
 }
 
 const LABEL={live:"✅ live",reviewing:"🟡 审核中",parked:"⛔ 卡住",unverified:"❓ 待核实",nolink:"⚠️ 发了但没链接"};
