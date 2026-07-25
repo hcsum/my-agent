@@ -105,8 +105,6 @@ a.tag{text-decoration:none;cursor:pointer}
 a.tag:hover{border-color:var(--acc);color:var(--acc)}
 .note{margin-top:7px;font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
 .note.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
-.meta{margin-top:6px;font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
-.meta b{font-weight:500;color:var(--fg)}
 .empty{color:var(--muted);font-size:14px;padding:20px 0}
 select{padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font-size:13px}
 .tab.gap[aria-selected=true]{background:var(--ok);border-color:var(--ok)}
@@ -337,14 +335,6 @@ function card(d,need){
   const typeBadge=typeText?\`<span class="tag">\${esc(typeText)}</span>\`:"";
   const pricingText=d.pricingModel&&d.pricingModel!=="unknown"?(PRICING_LABEL[d.pricingModel]||d.pricingModel):"";
   const pricingBadge=pricingText?\`<span class="tag">\${esc(pricingText)}</span>\`:"";
-  const meta=[
-    d.reason?\`<span><b>判断</b>：\${esc(d.reason)}</span>\`:"",
-    typeText?\`<span><b>类型</b>：\${esc(typeText)}</span>\`:"",
-    pricingText?\`<span><b>成本</b>：\${esc(pricingText)}\${d.pricingNote?\`，\${esc(d.pricingNote)}\`:""}</span>\`:"",
-    d.linkRel?\`<span><b>rel</b>：\${esc(d.linkRel)}</span>\`:"",
-    d.linkRobots?\`<span><b>robots</b>：\${esc(d.linkRobots)}</span>\`:"",
-    idxStatus?\`<span><b>Google</b>：\${esc(INDEX_LABEL[idxStatus]||idxStatus)}\${d.indexChecked[f]?\`（\${esc(d.indexChecked[f])}）\`:""}</span>\`:"",
-  ].filter(Boolean).join("");
   const evidence=self+" "+PROJECTS.filter(p=>p!==f&&d.status[p]==="live"&&d.detail[p])
     .map(p=>\`<a class="tag ok" href="\${esc(d.detail[p])}" target="_blank" rel="noopener">\${esc(p.split("/")[0])} ↗</a>\`).join(" ");
   const link=st==="live"&&d.detail[f]?d.detail[f]:"https://"+d.website;
@@ -363,7 +353,6 @@ function card(d,need){
       \${d.tier>=2?\`<span class="tier">✅ 验证 \${d.tier}×</span>\`:d.tier===1?'<span class="tier" style="color:var(--muted)">🟡 live 1×</span>':""}
       \${evidence}
     </div>
-    \${meta?\`<div class="meta">\${meta}</div>\`:""}
     \${openNeed.length?\`<div class="need">还差：\${openNeed.map(p=>\`<a href="\${esc(link)}" target="_blank" rel="noopener">\${esc(p)}</a>\`).join("")}</div>\`:""}
     \${pendingNeed.length?\`<div class="need">审核中：\${pendingNeed.map(p=>{
       const s=d.status[p], u=d.detail[p], label=\`\${esc(p.split("/")[0])} \${LABEL[s]||s}\`;
