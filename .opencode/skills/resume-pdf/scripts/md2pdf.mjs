@@ -75,7 +75,7 @@ async function loadMarked() {
 
 const DENSITY = {
   tight: { page: "10mm 12mm", body: 9.2, line: 1.25, h1: 17, h2: 11, h3: 10, meta: 8.3, gap: 9 },
-  normal: { page: "11mm 13mm", body: 9.6, line: 1.3, h1: 18, h2: 11.5, h3: 10.4, meta: 8.6, gap: 11 },
+  normal: { page: "12mm 15mm", body: 9.6, line: 1.3, h1: 18, h2: 11.5, h3: 10.4, meta: 8.6, gap: 11 },
   loose: { page: "13mm 15mm", body: 10.2, line: 1.4, h1: 19, h2: 12, h3: 11, meta: 9.2, gap: 14 },
 };
 const d = DENSITY[density] || DENSITY.normal;
@@ -85,7 +85,7 @@ const defaultCss = `
   * { box-sizing: border-box; }
   body {
     font-family: "Helvetica Neue", "Arial", "PingFang SC", "Hiragino Sans GB", sans-serif;
-    font-size: ${d.body}pt; line-height: ${d.line}; color: #1a1a1a; margin: 0;
+    font-size: ${d.body}pt; line-height: ${d.line}; color: #000; margin: 0;
   }
   h1 { font-size: ${d.h1}pt; margin: 0 0 1px; }
   h2 { font-size: ${d.h2}pt; border-bottom: 1.4px solid #333; padding-bottom: 2px;

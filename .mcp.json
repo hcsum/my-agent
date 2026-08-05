@@ -3,6 +3,13 @@
     "mem0": {
       "command": "npx",
       "args": ["tsx", ".opencode/lib/mem0-claude-mcp.ts"]
+    },
+    "onething": {
+      "type": "http",
+      "url": "https://onethingatatime.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ONETHING_TOKEN}"
+      }
     }
   }
 }

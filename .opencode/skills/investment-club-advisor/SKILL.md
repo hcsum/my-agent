@@ -43,6 +43,8 @@ Give real advice — the user explicitly wants it. But ground every recommendati
 ## Output & housekeeping
 
 - Reply in 简体中文. Keep tickers, English product/term names, and code identifiers in original form.
+- **Always include the full 解读 in the chat reply.** Saving a decode/advice file is archival only; it does not replace the user-facing answer. The final reply must contain the paragraph-by-paragraph report decode plus the concrete holdings advice, not just a short summary or a file path.
+- If the decode is long, structure the reply with concise headings, but do not omit substantive report paragraphs. The user asked to see the complete readout every time.
 - After writing files in `notes/`, commit and push (per `notes/CLAUDE.md`).
 - If the user asks to receive this on a cadence, it fits the scheduler — but a report has to be fed in each time, so this is normally user-driven, not auto-scheduled.
 
