@@ -4,6 +4,7 @@ import path from "node:path";
 import { AppOrchestrator } from "./app/orchestrator.js";
 import { loadConfig } from "./config.js";
 import { ExecutionSlot } from "./execution-slot.js";
+import { ExternalSessionObserver } from "./external-session-observer.js";
 import { startOpencodeServer } from "./opencode-server.js";
 import { createProvider } from "./providers/index.js";
 import { PublicEventPublisher } from "./public-activity.js";
@@ -49,6 +50,16 @@ async function main(): Promise<void> {
   const server = config.providers.opencode
     ? await startOpencodeServer(config.providers.opencode.baseUrl)
     : undefined;
+  // Sessions on that server belong to external clients (Telegram bot, TUI).
+  // On the opencode provider OpencodeRuntime already watches them; on any other
+  // provider it is never constructed, so without this nobody subscribes to the
+  // event stream and everything those clients do stays off the status page.
+  const externalSessions =
+    server && config.providers.opencode && config.provider !== "opencode"
+      ? new ExternalSessionObserver(config.providers.opencode, publicActivity)
+      : undefined;
+  externalSessions?.start();
+
   const queue = new SerialQueue(publicActivity);
   const provider = createProvider({ config, publicActivity });
   const orchestrator = new AppOrchestrator(provider);
@@ -155,6 +166,7 @@ async function main(): Promise<void> {
       await scheduler?.stop();
       await deliveryApi?.stop();
       await bridge?.stop();
+      await externalSessions?.stop();
       await publicActivityReplicator?.stop();
     } catch (error) {
       console.error("[app] error during teardown", error);
