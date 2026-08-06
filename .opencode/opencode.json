@@ -11,8 +11,7 @@
       }
     }
   },
-  "instructions": ["notes/user.md", "~/.mentor/plugin/stance.md", "~/.mentor/profile.md"],
-  "skills": { "paths": ["~/.mentor/plugin/skills"] },
+  "instructions": ["notes/user.md"],
   "plugin": ["./plugin/scheduler.ts", "./plugin/send-file.ts"],
   "permission": {}
 }
