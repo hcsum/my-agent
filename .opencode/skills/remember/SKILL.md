@@ -25,7 +25,7 @@ Maintain the agent's own durable memory under `notes/memory/`: operational facts
 3. Append a `## YYYY-MM-DD` section to the topic file. Stay close to what was actually said or observed; add just enough surrounding context (why it matters, when it applies) that a future session with zero memory of this conversation can use it correctly.
 4. Update the file's frontmatter: set `created` only if the file is new, always bump `touched` to today.
 5. Update `index.md`: bump `touched`, refresh the one-line summary if it changed meaningfully, add a new row if the file is new.
-6. Commit: `git -C notes add -A && git -C notes commit -m "memory: <slug> ..."` — same revertible-commit discipline as the `mentor` skill's `todos.md` edits.
+6. Commit: `git -C notes add -A && git -C notes commit -m "memory: <slug> ..."` — same revertible-commit discipline as the `todos` skill's `todos.md` edits.
 
 ### Recall (read)
 
@@ -41,7 +41,7 @@ Ask "is this a fact for the user to reread, or a fact I need to operate correctl
 
 - **User-facing** ("记一下 / mark down / jot", saving a reply verbatim): not this skill — use the `brain-dump` skill instead, destination `notes/brain-dump/`.
 - **Agent-facing** ("记住 / 别忘了 / 下次记得 / remember that", an operational fact you'll need later): this skill, destination `notes/memory/`.
-- **Not this skill either**: open tasks belong in `notes/todos.md` (via the `mentor` skill); external/world knowledge belongs in the LLM wiki (via `llm-wiki`); there's a separate, currently-**disabled** mem0 auto-extraction memory system (`docs/memory-feature-design.md`, `.opencode/memory/`) — don't resurrect or wire into that mechanism to implement this skill.
+- **Not this skill either**: open tasks belong in `notes/todos.md` (via the mentor plugin's `todos` skill); external/world knowledge belongs in the LLM wiki (via `llm-wiki`); there's a separate, currently-**disabled** mem0 auto-extraction memory system (`docs/memory-feature-design.md`, `.opencode/memory/`) — don't resurrect or wire into that mechanism to implement this skill.
 - When it's genuinely unclear who the content is for, ask rather than guessing.
 
 ## File format

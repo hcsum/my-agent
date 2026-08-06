@@ -11,7 +11,7 @@ Turn a 韭俱乐部 report into two things the user can act on: a faithful **解
 - **Holdings** — read `notes/my-files/investment-portfolio.md` (US brokerage + China fund account, with per-fund sector/holding breakdown). Always re-read it; the user updates it.
 - **思路 ledger** — read `notes/my-files/investment-club/投资思路-心法笔记.md` at the start of every run: the accumulated cross-report reasoning framework the user and agent refine over time. Carry its principles into the current advice, and when a run produces a genuinely new/upgraded insight (not a one-off snapshot), append a dated entry or revise an existing one.
 - **Club framework** — the four background docs in `notes/my-files/investment-club/` (`会员权益及配置思路.md` = 四档配置 + Joe 的资产配置表, `俱乐部新手食用指南.md` = 右侧/左侧 + 四档框架, `盘中技术分析速览使用方法.md`, `祖训.md` = trading discipline). Read them the first time you run, or when a term/rule needs grounding. Don't re-read every run once you know them.
-- **The user's reality** (`notes/user.md`): between jobs, income matters, has savings but wants no zero-income state. Weight advice toward this risk reality — do NOT just mirror the club's aggressive 投机 tier.
+- **The user's reality** (the `## Reality` section of `notes/mentor/profile.md`, already in your context): between jobs, income matters, has savings but wants no zero-income state. Weight advice toward this risk reality — do NOT just mirror the club's aggressive 投机 tier.
 
 ## Step 1 — Decode (always)
 

@@ -43,7 +43,8 @@ knowledge, or facts the repo/code/AGENTS.md already encodes.
 
 - This memory is about the **user** and **how to work with them**. Topic/world knowledge goes to the
   `llm-wiki` (`notes/knowledge/`); durable agent behavior rules go to `AGENTS.md`.
-- `notes/user.md` is the Mentor's synthesized picture of the user (see `notes/AGENTS.md`) — a
-  separate, human-readable layer, not this store.
+- `notes/mentor/profile.md` is the mentor yardstick (goals / reality / don't-let-me / observed
+  patterns) and `notes/user.md` holds the reference facts other skills look up — both are separate,
+  human-readable layers, not this store.
 - `notes/memory/SNAPSHOT.md` is a read-only audit dump of the store, regenerated automatically.
   Don't edit it; mem0/Qdrant is the source of truth.
