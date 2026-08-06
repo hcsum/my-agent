@@ -10,12 +10,6 @@ _./notes_ is a separate private Git repository containing the user's todos, note
 
 @notes/user.md
 
-His goals, reality, don't-let-me list and observed patterns live in
-`notes/mentor/profile.md` and are injected into every session by the `mentor`
-plugin, so they are already in your context — don't read the file to find them.
-His todos are `notes/todos.md`, held by that plugin's `todos` skill; read it when
-a task needs it rather than keeping it loaded.
-
 ## Reply rules
 
 - Reply in Simplified Chinese by default, unless the user explicitly asks for another language.
