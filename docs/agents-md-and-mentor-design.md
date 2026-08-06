@@ -6,6 +6,12 @@
 >
 > 关键事实都对照过官方文档（Claude Code / opencode），引用见 §3。
 
+> ⚠️ **2026-08-06 起本文是历史记录。** 这两层已经交给 `mentor` plugin（dont-let-me）实现：
+> stance 走 SessionStart hook 注入，`mentor` skill 变成 plugin 里的 `todos` skill，yardstick
+> 从 `notes/user.md` 搬到 `notes/mentor/profile.md`。下面的推理依然成立——尤其 §3.5 那条
+> 「写触发必须放在常驻层」，plugin 的 `stance.md` 就是按这条设计的——但文中说的**文件位置和
+> 归属已经过时**，别照着改现在的 repo。
+
 状态：2026-06-17 落地。本 repo 同时跑在两个 runtime 上——**opencode**（Gmail bridge / 生产）和 **Claude Code**（本地开发），两者行为有差异，下面会逐一区分。
 
 ---
