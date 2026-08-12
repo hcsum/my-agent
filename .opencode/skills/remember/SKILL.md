@@ -39,7 +39,7 @@ Trigger on: an explicit ask ("还记得...", "do you remember...", "之前记的
 
 Ask "is this a fact for the user to reread, or a fact I need to operate correctly next time?"
 
-- **User-facing** ("记一下 / mark down / jot", saving a reply verbatim): not this skill — use the `brain-dump` skill instead, destination `notes/brain-dump/`.
+- **User-facing** ("记一下 / mark down / jot", saving something for the user to reread): not this skill — use the `brain-dump` skill instead, destination `notes/brain-dump/`.
 - **Agent-facing** ("记住 / 别忘了 / 下次记得 / remember that", an operational fact you'll need later): this skill, destination `notes/memory/`.
 - **Not this skill either**: open tasks belong in `notes/todos.md` (via the mentor plugin's `todos` skill); external/world knowledge belongs in the LLM wiki (via `llm-wiki`); there's a separate, currently-**disabled** mem0 auto-extraction memory system (`docs/memory-feature-design.md`, `.opencode/memory/`) — don't resurrect or wire into that mechanism to implement this skill.
 - When it's genuinely unclear who the content is for, ask rather than guessing.

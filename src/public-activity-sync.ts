@@ -15,6 +15,7 @@ interface PublicActivityIngestPayload {
 }
 
 export class PublicActivityReplicator {
+  private static readonly maxRetryDelayMs = 60000;
   private readonly ingestUrl: string;
   private readonly token: string;
   private readonly heartbeatMs: number;
@@ -22,9 +23,11 @@ export class PublicActivityReplicator {
   private readonly dispatcher = buildProxyDispatcher();
   private latestSnapshot?: PublicActivitySnapshot;
   private heartbeatTimer?: NodeJS.Timeout;
+  private retryTimer?: NodeJS.Timeout;
   private flushPromise?: Promise<void>;
   private pendingFlush = false;
   private stopped = false;
+  private failureCount = 0;
 
   constructor(options: PublicActivityReplicatorOptions) {
     this.ingestUrl = options.ingestUrl;
@@ -52,32 +55,69 @@ export class PublicActivityReplicator {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
     await this.flushPromise;
   }
 
   private requestFlush(): void {
     if (!this.latestSnapshot || this.stopped) return;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
     this.pendingFlush = true;
     if (this.flushPromise) return;
     this.flushPromise = this.flushLoop();
   }
 
   private async flushLoop(): Promise<void> {
+    let retryAfterMs: number | undefined;
     try {
       while (this.pendingFlush && !this.stopped) {
         this.pendingFlush = false;
         const snapshot = this.latestSnapshot;
         if (!snapshot) return;
         await this.sendSnapshot(snapshot);
+        this.failureCount = 0;
       }
     } catch (error) {
-      console.error("[public-activity-sync] snapshot upload failed", error);
+      this.pendingFlush = true;
+      retryAfterMs = this.nextRetryDelayMs();
+      console.error(
+        `[public-activity-sync] snapshot upload failed; retrying in ${Math.round(
+          retryAfterMs / 1000,
+        )}s: ${formatError(error)}`,
+      );
     } finally {
       this.flushPromise = undefined;
       if (this.pendingFlush && !this.stopped) {
-        this.requestFlush();
+        if (retryAfterMs === undefined) {
+          this.requestFlush();
+        } else {
+          this.scheduleRetry(retryAfterMs);
+        }
       }
     }
+  }
+
+  private scheduleRetry(delayMs: number): void {
+    if (this.retryTimer || this.stopped) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.requestFlush();
+    }, delayMs);
+    this.retryTimer.unref?.();
+  }
+
+  private nextRetryDelayMs(): number {
+    this.failureCount += 1;
+    return Math.min(
+      PublicActivityReplicator.maxRetryDelayMs,
+      1000 * 2 ** Math.min(this.failureCount - 1, 6),
+    );
   }
 
   private async sendSnapshot(snapshot: PublicActivitySnapshot): Promise<void> {
@@ -105,6 +145,18 @@ export class PublicActivityReplicator {
       `status=${response.status} body=${body.slice(0, 300) || "<empty>"}`,
     );
   }
+}
+
+function formatError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+
+  const cause = error.cause;
+  if (cause instanceof Error) {
+    const code = "code" in cause ? String(cause.code) : undefined;
+    return [code, cause.message].filter(Boolean).join(" ");
+  }
+
+  return error.message;
 }
 
 function buildProxyDispatcher(): EnvHttpProxyAgent | undefined {

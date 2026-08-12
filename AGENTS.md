@@ -28,7 +28,7 @@ Be proactive with reversible, low-risk actions implied by the task. Do not infer
 
 Route content-saving requests to the skill that owns the destination — each skill's own description defines exactly when it triggers, don't re-derive the routing here:
 
-- **brain-dump** skill — verbatim content the user wants to keep for themselves → `notes/brain-dump/`.
+- **brain-dump** skill — user-facing notes the user wants to keep for rereading, including enough context to understand later unless exact verbatim saving is requested → `notes/brain-dump/`.
 - **remember** skill — operational context the agent itself needs across sessions → `notes/memory/`.
 - **summarization** skill — lossy, structured summaries.
 - **llm-wiki** skill — external/world knowledge, ingest and query.

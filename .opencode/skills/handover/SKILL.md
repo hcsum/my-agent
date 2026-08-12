@@ -1,6 +1,6 @@
 ---
 name: handover
-description: Summarize the current conversation into a handover — key points, decisions, state, and next steps — for the user or a next session to pick up. Use when the user says handover / 交接 / 总结一下当前 / 做个 handover / hand off, or asks to wrap up where things stand. Summarizes the part the user names, or the whole current context by default. Output always goes to the clipboard; write a file only when the user explicitly asks for one. This is a running-context handover — for saving a reply verbatim use `brain-dump`, for durable agent facts use `remember`.
+description: Summarize the current conversation into a handover — key points, decisions, state, and next steps — for the user or a next session to pick up. Use when the user says handover / 交接 / 总结一下当前 / 做个 handover / hand off, or asks to wrap up where things stand. Summarizes the part the user names, or the whole current context by default. Output always goes to the clipboard; write a file only when the user explicitly asks for one. This is a running-context handover — for saving a user-facing note for later rereading use `brain-dump`, for durable agent facts use `remember`.
 ---
 
 Turn the current conversation into a handover: a tight brief of what was decided, where things stand, and what to do next — so the user or a fresh session can continue without re-reading the whole thread.
