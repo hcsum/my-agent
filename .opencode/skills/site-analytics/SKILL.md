@@ -12,7 +12,7 @@ Use this skill to answer product/SEO usage questions from the user's first-party
 - Use GSC when the question is about organic search demand, queries, clicks, impressions, CTR, or ranking.
 - Use the bundled script for GA4 queries instead of re-writing OAuth code each time.
 - If Google APIs time out, ensure Node fetch uses the local proxy by relying on `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`; the script already installs `EnvHttpProxyAgent`.
-- If a service account returns `PERMISSION_DENIED`, try the next configured credential before giving up.
+- A single credential serves both GA4 and GSC: `onething-ga-reader@...` (see the credentials doc). If it returns `PERMISSION_DENIED` on one property, that property is missing access — do not fall back to other keys.
 
 ## GA4 Helper
 

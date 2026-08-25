@@ -4,6 +4,8 @@ dist/
 .data/
 .secrets/
 .DS_Store
+__pycache__/
+*.pyc
 notes/
 tmp/
 signature_cache.json
